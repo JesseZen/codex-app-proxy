@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-APP_ROOT="/Users/jesse/Applications/codex-app-proxy"
+APP_ROOT="$HOME/Applications/codex-app-proxy"
 PID_FILE="$HOME/.codex-app-proxy.pid"
 LOG_FILE="$HOME/Library/Logs/codex-app-proxy.log"
 NODE_BIN="/opt/homebrew/bin/node"

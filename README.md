@@ -1,38 +1,38 @@
 # codex-app-proxy
 
-本地代理，用法是：
+给 Codex App 用的本地代理：
 
 `Codex App -> http://127.0.0.1:8787 -> 你的中转站 API`
 
-功能：
+它主要做几件事：
 
-- 转发所有请求到 `BASE_URL`
-- 对所有 `POST` JSON 请求过滤 `tools` 里的 `image_generation`
-- 如果 `tool_choice` 明确指定了 `image_generation`，自动改成 `auto`
-- 支持通过 `ACTIVE_PROVIDER` 自动切换 `.env.<provider>` 配置
-- 启动时自动把 `~/.codex/config.toml` 当前 `model_provider` 对应的 `base_url` 改成 `http://127.0.0.1:PORT`
-- 退出时自动把 `base_url` 恢复成 `BASE_URL`
-- 可以编译成一个 macOS app，Spotlight 里直接搜 `Codex App Proxy` 启动
+- 把请求转发到 `BASE_URL`
+- 过滤 JSON 请求里 `tools` 中的 `image_generation`
+- 如果 `tool_choice` 明确指定了 `image_generation`，改成 `auto`
+- 支持用 `ACTIVE_PROVIDER` 切换 `.env.<provider>` 配置
+- 启动时把 `~/.codex/config.toml` 里当前 `model_provider` 的 `base_url` 改成本地代理地址
+- 退出时把 `base_url` 改回去
+- 可以打包成一个本地 macOS app，方便直接启动
 
 ## 启动
 
-Node 20+ 即可，Node 18/22/25 也可以。
+需要 Node 20+。Node 18/22/25 也可以。
 
 ```bash
 cp .env.example .env
 npm start
 ```
 
-程序启动时会自动读取当前目录的 `.env`，不需要手动 `export`。
+程序启动时会自动读取当前目录下的 `.env`，不需要手动 `export`。
 
 ## 多服务商切换
 
-推荐做法是：
+比较省事的方式是这样分：
 
 - `.env` 放公共配置和当前选中的 `ACTIVE_PROVIDER`
 - `.env.<provider>` 放每个服务商自己的 `BASE_URL` / `API_KEY`
 
-例如：
+示例：
 
 `.env`
 
@@ -56,25 +56,25 @@ BASE_URL=https://api.openai.com/v1
 API_KEY=sk-xxx
 ```
 
-这样 app 启动时会按 `.env` 里的 `ACTIVE_PROVIDER` 自动选中对应服务商。
+启动时会先看 `.env` 里的 `ACTIVE_PROVIDER`，再加载对应的 `.env.<provider>`。
 
-切换时只需要改：
+如果只是切换 provider，改这一项就够了：
 
 ```bash
 ACTIVE_PROVIDER=openai
 ```
 
-启动加载顺序是：
+加载优先级如下：
 
 1. shell 里显式传入的环境变量
 2. `.env.<ACTIVE_PROVIDER>`
 3. `.env`
 
-也就是说，命令行临时传入的值优先级最高。
+所以命令行里临时传的值优先级最高。
 
 ## 命令行快捷启动
 
-除了改 `.env` 里的 `ACTIVE_PROVIDER`，也可以直接按 provider 启动：
+除了手改 `.env`，也可以直接按 provider 启动：
 
 ```bash
 npm run start:openai
@@ -89,13 +89,13 @@ npm run start:provider -- openai
 npm run start:provider -- myrelay
 ```
 
-上面第二个例子会去读取：
+第二个例子会去读：
 
 ```bash
 .env.myrelay
 ```
 
-也可以不使用 `.env`，直接：
+也可以完全不用 `.env`，直接传：
 
 ```bash
 PORT=8787 \
@@ -103,42 +103,42 @@ BASE_URL=https://your-relay.example.com \
 npm start
 ```
 
-启动后不需要再手动改 `~/.codex/config.toml`。
-
-如果你的中转站要求固定 key，可以额外设置：
+如果你的中转站要求固定 key，再额外设置：
 
 ```bash
 API_KEY=sk-xxx
 ```
 
-设置后，代理会用 `Bearer <API_KEY>` 覆盖客户端传来的 `Authorization`。
-这个值通常可以直接对应你 `~/.codex/config.toml` 里的 `experimental_bearer_token`。
+代理会用 `Bearer <API_KEY>` 覆盖客户端传来的 `Authorization`。
 
-如果同时设置了 `ACTIVE_PROVIDER` 和 `.env.<provider>`，那么这里的 `API_KEY` / `BASE_URL` 会优先取 provider 文件里的值；除非你在 shell 里又显式传了一次。
+如果同时设置了 `ACTIVE_PROVIDER` 和 `.env.<provider>`，`API_KEY` / `BASE_URL` 会优先取 provider 文件里的值。只有你在 shell 里再次显式传入，才会覆盖它们。
 
 ## Codex 配置
 
 代理会自动修改 `~/.codex/config.toml` 里当前 `model_provider` 对应 section 的 `base_url`。
 
-如果你原来上游地址是带前缀的，例如 `/v1`，那就把 `BASE_URL` 也写成带前缀的版本，例如：
+如果你的上游地址本身带前缀，比如 `/v1`，那就把 `BASE_URL` 也写成带前缀的完整地址：
 
 ```bash
 BASE_URL=https://your-relay.example.com/v1
 ```
 
-代理会保留请求路径和 query string，并拼到这个 base URL 后面。
+代理会保留原始请求路径和 query string，再拼到这个 base URL 后面。
 
-默认配置文件路径是 `~/.codex/config.toml`，如果你想指定别的路径，可以设置：
+默认配置文件路径是 `~/.codex/config.toml`。如果你想指定别的路径，可以设置：
 
 ```bash
 CODEX_CONFIG_PATH=/path/to/config.toml
 ```
 
-说明：
+现在这套做法会改两项配置：
 
-- 启动时会把 `base_url` 注入成 `http://127.0.0.1:PORT`
-- 正常退出（如 `Ctrl+C`）时会恢复成 `BASE_URL`
-- 如果进程被强制杀掉（例如 `kill -9`），来不及执行退出钩子，`base_url` 可能不会自动恢复
+- 启动时把 `base_url` 注入成 `http://127.0.0.1:PORT`
+- 如果设置了 `API_KEY`，也会把 `experimental_bearer_token` 改成同一个值
+
+正常退出时，这两项都会恢复。
+
+如果进程被强制杀掉，比如 `kill -9`，退出钩子来不及执行，`base_url` 和 `experimental_bearer_token` 都可能残留在 `config.toml` 里。这不是远端泄露，但算本机残留风险。
 
 ## macOS App
 
@@ -156,13 +156,13 @@ npm run build:app
 
 之后可以直接用 Spotlight 搜 `Codex App Proxy` 启动。
 
-现在这个 app 采用更直接的方式：
+当前这个 app 的行为很直接：
 
-- 打开 app 时，会弹出一个 Terminal 窗口
-- Terminal 会 `cd` 到项目目录并直接运行 `/opt/homebrew/bin/node src/server.js`
-- 关闭那个 Terminal 窗口，就等于停止代理
+- 打开 app，会弹出一个 Terminal 窗口
+- Terminal 会 `cd` 到项目目录，然后执行 `/opt/homebrew/bin/node src/server.js`
+- 关掉这个 Terminal 窗口，就等于停止代理
 
-日志文件：
+日志文件在：
 
 ```text
 ~/Library/Logs/codex-app-proxy.log
@@ -170,7 +170,7 @@ npm run build:app
 
 ## 测试
 
-现在仓库里带了一个最小回归测试集，直接跑：
+仓库里带了最小回归测试，直接跑：
 
 ```bash
 npm test
@@ -180,13 +180,13 @@ npm test
 
 - `image_generation` 会从 JSON body 的 `tools` 里被过滤掉
 - `tool_choice` 指向 `image_generation` 时会被改成 `auto`
-- `PATCH` / `PUT` 这类非 `POST` 但带 body 的请求不会再丢 body
-- 压缩过的 JSON body 因为无法安全过滤，会返回 `415`
+- `PATCH` / `PUT` 这类带 body 的非 `POST` 请求不会丢 body
+- 压缩过的 JSON body 因为没法安全过滤，会返回 `415`
 - 上游流式响应可以正常回传
 
-## Mock 压测
+## mock 压测
 
-压测不会打真实上游 API，而是：
+压测不会打真实上游 API。流程是：
 
 - 本地起一个 mock upstream
 - 本地起当前 proxy
@@ -199,9 +199,9 @@ npm test
 npm run bench
 ```
 
-默认会输出：
+默认输出：
 
-- 两组结果：`direct-upstream` 和 `via-proxy`
+- `direct-upstream` 和 `via-proxy` 两组结果
 - 每组的总耗时、RPS、`p50/p95/p99/max` 延迟
 - proxy 相对直连的额外开销
 
