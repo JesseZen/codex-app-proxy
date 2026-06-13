@@ -167,3 +167,58 @@ npm run build:app
 ```text
 ~/Library/Logs/codex-app-proxy.log
 ```
+
+## 测试
+
+现在仓库里带了一个最小回归测试集，直接跑：
+
+```bash
+npm test
+```
+
+覆盖点包括：
+
+- `image_generation` 会从 JSON body 的 `tools` 里被过滤掉
+- `tool_choice` 指向 `image_generation` 时会被改成 `auto`
+- `PATCH` / `PUT` 这类非 `POST` 但带 body 的请求不会再丢 body
+- 压缩过的 JSON body 因为无法安全过滤，会返回 `415`
+- 上游流式响应可以正常回传
+
+## Mock 压测
+
+压测不会打真实上游 API，而是：
+
+- 本地起一个 mock upstream
+- 本地起当前 proxy
+- 先测直连 mock upstream
+- 再测通过 proxy 转发到同一个 mock upstream
+
+直接跑：
+
+```bash
+npm run bench
+```
+
+默认会输出：
+
+- 两组结果：`direct-upstream` 和 `via-proxy`
+- 每组的总耗时、RPS、`p50/p95/p99/max` 延迟
+- proxy 相对直连的额外开销
+
+常用调参方式：
+
+```bash
+BENCH_REQUESTS=1000 \
+BENCH_CONCURRENCY=100 \
+BENCH_BODY_BYTES=65536 \
+npm run bench
+```
+
+可用环境变量：
+
+- `BENCH_REQUESTS`：总请求数，默认 `400`
+- `BENCH_CONCURRENCY`：并发数，默认 `40`
+- `BENCH_BODY_BYTES`：请求 JSON 里 `input` 的填充大小，默认 `32768`
+- `BENCH_UPSTREAM_DELAY_MS`：mock upstream 每次响应前额外 sleep 多久，默认 `0`
+- `BENCH_RESPONSE_BYTES`：mock upstream 返回体大小，默认 `256`
+- `BENCH_PROXY_PORT`：proxy 压测时监听端口，默认 `21100`

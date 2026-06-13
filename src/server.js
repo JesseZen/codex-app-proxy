@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 
 loadDotEnv();
 
@@ -15,6 +16,8 @@ const UPSTREAM_BASE_URL = process.env.BASE_URL;
 const UPSTREAM_API_KEY = process.env.API_KEY || "";
 const CODEX_CONFIG_PATH = expandHome(process.env.CODEX_CONFIG_PATH || "~/.codex/config.toml");
 const LOCAL_BASE_URL = `http://${LISTEN_HOST}:${LISTEN_PORT}`;
+const LOG_EVERY_REQUEST = process.env.LOG_EVERY_REQUEST === "1";
+const LOG_FILTERED_REQUESTS = process.env.LOG_FILTERED_REQUESTS !== "0";
 
 const configPatchState = {
   patched: false,
@@ -410,26 +413,83 @@ function sanitizeToolChoice(toolChoice) {
 
 function sanitizeJsonBody(body) {
   if (!body || typeof body !== "object") {
-    return body;
+    return {
+      body,
+      changed: false,
+      removedCount: 0,
+    };
   }
 
   const next = Array.isArray(body) ? [...body] : { ...body };
+  let changed = false;
+  let removedCount = 0;
 
   if (Array.isArray(next.tools)) {
     const originalCount = next.tools.length;
     next.tools = next.tools.filter((tool) => !isImageGenerationTool(tool));
-    next.__removedImageGenerationTools =
-      originalCount > next.tools.length ? originalCount - next.tools.length : 0;
+    removedCount = originalCount - next.tools.length;
+    changed = changed || removedCount > 0;
   }
 
   if ("tool_choice" in next) {
-    next.tool_choice = sanitizeToolChoice(next.tool_choice);
+    const sanitizedToolChoice = sanitizeToolChoice(next.tool_choice);
+    changed = changed || sanitizedToolChoice !== next.tool_choice;
+    next.tool_choice = sanitizedToolChoice;
   }
 
-  return next;
+  return {
+    body: next,
+    changed,
+    removedCount,
+  };
 }
 
-function copyHeaders(reqHeaders, bodyBufferLength) {
+function getHeaderValue(headerValue) {
+  if (Array.isArray(headerValue)) {
+    return headerValue[0] || "";
+  }
+
+  return headerValue || "";
+}
+
+function methodMayHaveRequestBody(method) {
+  return method !== "GET" && method !== "HEAD";
+}
+
+function requestHasBody(reqHeaders) {
+  const transferEncoding = getHeaderValue(reqHeaders["transfer-encoding"]);
+  if (transferEncoding) {
+    return true;
+  }
+
+  const contentLength = Number(getHeaderValue(reqHeaders["content-length"]));
+  return Number.isFinite(contentLength) && contentLength > 0;
+}
+
+function isJsonContentType(contentType) {
+  const normalized = contentType.toLowerCase();
+  return normalized.includes("application/json") || normalized.includes("+json");
+}
+
+function hasUnsupportedContentEncoding(contentEncoding) {
+  if (!contentEncoding) {
+    return false;
+  }
+
+  return contentEncoding
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .some((value) => value && value !== "identity");
+}
+
+function copyHeaders(
+  reqHeaders,
+  {
+    bodyBufferLength,
+    preserveContentEncoding = false,
+    preserveContentLength = false,
+  } = {},
+) {
   const headers = new Headers();
 
   for (const [key, value] of Object.entries(reqHeaders)) {
@@ -438,7 +498,13 @@ function copyHeaders(reqHeaders, bodyBufferLength) {
     }
 
     const lowerKey = key.toLowerCase();
-    if (["host", "content-length", "connection"].includes(lowerKey)) {
+    if (
+      lowerKey === "host" ||
+      lowerKey === "connection" ||
+      lowerKey === "transfer-encoding" ||
+      (lowerKey === "content-length" && !preserveContentLength) ||
+      (lowerKey === "content-encoding" && !preserveContentEncoding)
+    ) {
       continue;
     }
 
@@ -473,66 +539,144 @@ async function readRequestBody(req) {
   return Buffer.concat(chunks);
 }
 
-function writeResponse(res, upstreamResponse) {
-  res.writeHead(upstreamResponse.status, Object.fromEntries(upstreamResponse.headers.entries()));
+async function writeResponse(res, upstreamResponse) {
+  const responseHeaders = Object.fromEntries(upstreamResponse.headers.entries());
+
+  // fetch() auto-decodes body streams, so these headers are no longer accurate
+  delete responseHeaders["transfer-encoding"];
+  delete responseHeaders["content-encoding"];
+  delete responseHeaders["content-length"];
+
+  res.writeHead(upstreamResponse.status, responseHeaders);
 
   if (!upstreamResponse.body) {
     res.end();
     return;
   }
 
-  Readable.fromWeb(upstreamResponse.body).pipe(res);
+  await pipeline(Readable.fromWeb(upstreamResponse.body), res);
+}
+
+function writeJsonError(res, statusCode, message, type = "proxy_error") {
+  if (res.headersSent || res.writableEnded) {
+    return;
+  }
+
+  res.writeHead(statusCode, { "content-type": "application/json; charset=utf-8" });
+  res.end(
+    JSON.stringify({
+      error: {
+        message,
+        type,
+      },
+    }),
+  );
+}
+
+function shouldLogRequest(removedCount) {
+  return (removedCount > 0 && LOG_FILTERED_REQUESTS) || LOG_EVERY_REQUEST;
 }
 
 async function handleRequest(req, res) {
   const upstreamUrl = joinUrl(UPSTREAM_BASE_URL, req.url || "/");
   const method = req.method || "GET";
-  let bodyBuffer;
+  const abortController = new AbortController();
+  const onRequestAborted = () => {
+    abortController.abort();
+  };
+  const onResponseClosed = () => {
+    if (!res.writableFinished) {
+      abortController.abort();
+    }
+  };
+
+  req.on("aborted", onRequestAborted);
+  res.on("close", onResponseClosed);
+
+  let upstreamRequestBody;
+  let upstreamBodyBufferLength;
+  let preserveContentEncoding = false;
+  let preserveContentLength = false;
+  let useStreamingRequestBody = false;
   let removedCount = 0;
 
   try {
-    if (method === "POST") {
-      const rawBody = await readRequestBody(req);
-      const contentType = req.headers["content-type"] || "";
+    if (methodMayHaveRequestBody(method) && requestHasBody(req.headers)) {
+      const contentType = getHeaderValue(req.headers["content-type"]);
+      const contentEncoding = getHeaderValue(req.headers["content-encoding"]);
 
-      if (rawBody.length > 0 && contentType.includes("application/json")) {
-        const parsed = JSON.parse(rawBody.toString("utf8"));
-        const sanitized = sanitizeJsonBody(parsed);
-        removedCount = sanitized.__removedImageGenerationTools || 0;
-        delete sanitized.__removedImageGenerationTools;
-        bodyBuffer = Buffer.from(JSON.stringify(sanitized));
+      if (isJsonContentType(contentType)) {
+        if (hasUnsupportedContentEncoding(contentEncoding)) {
+          writeJsonError(
+            res,
+            415,
+            "Cannot safely filter image_generation from encoded JSON request bodies.",
+            "unsupported_content_encoding",
+          );
+          return;
+        }
+
+        const rawBody = await readRequestBody(req);
+
+        if (rawBody.length > 0) {
+          const parsed = JSON.parse(rawBody.toString("utf8"));
+          const sanitized = sanitizeJsonBody(parsed);
+          removedCount = sanitized.removedCount;
+          if (sanitized.changed) {
+            upstreamRequestBody = Buffer.from(JSON.stringify(sanitized.body));
+          } else {
+            upstreamRequestBody = rawBody;
+          }
+        } else {
+          upstreamRequestBody = rawBody;
+        }
+
+        upstreamBodyBufferLength = upstreamRequestBody.length;
       } else {
-        bodyBuffer = rawBody;
+        upstreamRequestBody = Readable.toWeb(req);
+        preserveContentEncoding = hasUnsupportedContentEncoding(contentEncoding);
+        preserveContentLength = true;
+        useStreamingRequestBody = true;
       }
     }
 
-    const headers = copyHeaders(req.headers, bodyBuffer?.length);
+    const headers = copyHeaders(req.headers, {
+      bodyBufferLength: upstreamBodyBufferLength,
+      preserveContentEncoding,
+      preserveContentLength,
+    });
     const upstreamResponse = await fetch(upstreamUrl, {
       method,
       headers,
-      body: bodyBuffer,
-      duplex: "half",
+      body: upstreamRequestBody,
+      duplex: useStreamingRequestBody ? "half" : undefined,
       redirect: "manual",
+      signal: abortController.signal,
     });
 
-    if (removedCount > 0) {
-      console.log(`[proxy] filtered ${removedCount} image_generation tool(s): ${method} ${req.url}`);
-    } else {
-      console.log(`[proxy] ${method} ${req.url}`);
+    if (shouldLogRequest(removedCount)) {
+      if (removedCount > 0) {
+        console.log(`[proxy] filtered ${removedCount} image_generation tool(s): ${method} ${req.url}`);
+      } else {
+        console.log(`[proxy] ${method} ${req.url}`);
+      }
     }
 
-    writeResponse(res, upstreamResponse);
+    await writeResponse(res, upstreamResponse);
   } catch (error) {
+    if (abortController.signal.aborted) {
+      return;
+    }
+
     console.error("[proxy] request failed", error);
-    res.writeHead(502, { "content-type": "application/json; charset=utf-8" });
-    res.end(
-      JSON.stringify({
-        error: {
-          message: error instanceof Error ? error.message : "Proxy request failed",
-          type: "proxy_error",
-        },
-      }),
+    writeJsonError(
+      res,
+      502,
+      error instanceof Error ? error.message : "Proxy request failed",
     );
+  } finally {
+    req.off("aborted", onRequestAborted);
+    res.off("close", onResponseClosed);
   }
 }
 
