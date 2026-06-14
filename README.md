@@ -9,6 +9,7 @@
 - 把请求转发到 `BASE_URL`
 - 过滤 JSON 请求里 `tools` 中的 `image_generation`
 - 如果 `tool_choice` 明确指定了 `image_generation`，改成 `auto`
+- 支持 Chat Completions API 到 Responses API 的自动转译（`API_FORMAT=chat_completions`）
 - 支持用 `ACTIVE_PROVIDER` 切换 `.env.<provider>` 配置
 - 启动时把 `~/.codex/config.toml` 里当前 `model_provider` 的 `base_url` 改成本地代理地址
 - 退出时把 `base_url` 改回去
@@ -113,6 +114,39 @@ API_KEY=sk-xxx
 
 如果同时设置了 `ACTIVE_PROVIDER` 和 `.env.<provider>`，`API_KEY` / `BASE_URL` 会优先取 provider 文件里的值。只有你在 shell 里再次显式传入，才会覆盖它们。
 
+## Chat Completions 适配
+
+如果你的上游只支持 OpenAI Chat Completions API（`/v1/chat/completions`），不支持 Responses API（`/v1/responses`），Codex App 会报错：
+
+```
+stream disconnected before completion: stream closed before response.completed
+```
+
+在 `.env.<provider>` 里加一行就行：
+
+```bash
+API_FORMAT=chat_completions
+```
+
+代理会自动做这些转译：
+
+- 请求路径：`/v1/responses` → `/v1/chat/completions`
+- 请求体：`input` → `messages`，`instructions` → `system` 消息，`tools` 格式转换
+- 响应 SSE：Chat Completions 的 `data:` + `[DONE]` → Responses API 的 `event: response.xxx` + `response.completed`
+- Tool call：Chat Completions 的 `delta.tool_calls` → Responses API 的 `function_call` 事件
+
+适用场景举例：
+
+| Provider | 需要 `API_FORMAT=chat_completions`？ |
+|----------|-------------------------------------|
+| OpenAI | ❌ 原生支持 Responses API |
+| OpenRouter | ❌ 原生支持 |
+| Groq | ✅ 只支持 Chat Completions |
+| JoyCode | ✅ 只支持 Chat Completions |
+| 其他 Chat-only 中转 | ✅ |
+
+原生支持 Responses API 的 provider 不需要设这个，代理会直接透明转发。
+
 ## Codex 配置
 
 代理会自动修改 `~/.codex/config.toml` 里当前 `model_provider` 对应 section 的 `base_url`。
@@ -183,6 +217,11 @@ npm test
 - `PATCH` / `PUT` 这类带 body 的非 `POST` 请求不会丢 body
 - 压缩过的 JSON body 因为没法安全过滤，会返回 `415`
 - 上游流式响应可以正常回传
+- Chat Completions 模式下请求体和路径会正确转译
+- Chat Completions SSE 流会转译成 Responses API 格式，包含 `response.completed`
+- Tool call 会正确转译（请求和响应双向）
+- 非 `/v1/responses` 路径不受 Chat Completions 模式影响
+- `image_generation` 过滤在 Chat Completions 模式下依然生效
 
 ## mock 压测
 
