@@ -666,8 +666,10 @@ function createChatToResponsesTransform(requestBody) {
   let currentFunctionCallName = "";
   let currentFunctionCallArguments = "";
   let textContent = "";
+  let reasoningContent = "";
+  let currentReasoningId = "";
   let started = false;
-  let currentOutputItemType = null; // "message" or "function_call"
+  let currentOutputItemType = null; // "message", "reasoning", or "function_call"
 
   const textEncoder = new TextEncoder();
 
@@ -687,7 +689,38 @@ function createChatToResponsesTransform(requestBody) {
 
     if (started) {
       // Close current output item if still open
-      if (currentOutputItemType === "message") {
+      if (currentOutputItemType === "reasoning") {
+        // Close reasoning output item
+        finalEvents.push({
+          event: "response.reasoning_text.done",
+          data: {
+            type: "response.reasoning_text.done",
+            output_index: outputIndex,
+            content_index: 0,
+            text: reasoningContent,
+            item_id: currentReasoningId,
+            sequence_number: nextSeq(),
+          },
+        });
+
+        responseObj.output.push({
+          type: "reasoning",
+          id: currentReasoningId,
+          summary: [],
+          content: [{ type: "reasoning_text", text: reasoningContent }],
+          status: "completed",
+        });
+
+        finalEvents.push({
+          event: "response.output_item.done",
+          data: {
+            type: "response.output_item.done",
+            output_index: outputIndex,
+            item: responseObj.output[responseObj.output.length - 1],
+            sequence_number: nextSeq(),
+          },
+        });
+      } else if (currentOutputItemType === "message") {
         // output_text.done
         finalEvents.push({
           event: "response.output_text.done",
@@ -826,6 +859,13 @@ function createChatToResponsesTransform(requestBody) {
     const delta = choice.delta || {};
     const finishReason = choice.finish_reason;
 
+    if (process.env.DEBUG_SSE === "1") {
+      const hasContent = delta.content != null && delta.content !== "";
+      const hasReasoning = delta.reasoning_content != null && delta.reasoning_content !== "";
+      const hasToolCalls = !!(delta.tool_calls && delta.tool_calls.length > 0);
+      console.log(`[proxy] delta: content=${hasContent ? JSON.stringify(delta.content).slice(0,50) : "none"} reasoning=${hasReasoning ? JSON.stringify(delta.reasoning_content).slice(0,50) : "none"} tool_calls=${hasToolCalls} finish=${finishReason || "none"}`);
+    }
+
     const events = [];
 
     // Emit initial events on first chunk
@@ -938,12 +978,167 @@ function createChatToResponsesTransform(requestBody) {
       }
     }
 
+    // Handle reasoning_content — convert to Responses API reasoning output item
+    // (Codex-style collapsible thinking section)
+    if (delta.reasoning_content != null && delta.reasoning_content !== "") {
+      if (currentOutputItemType !== "reasoning") {
+        // Close previous output item if any
+        if (currentOutputItemType === "function_call") {
+          events.push({
+            event: "response.function_call_arguments.done",
+            data: {
+              type: "response.function_call_arguments.done",
+              output_index: outputIndex,
+              item_id: currentFunctionCallId,
+              name: currentFunctionCallName,
+              arguments: currentFunctionCallArguments,
+              sequence_number: nextSeq(),
+            },
+          });
+
+          responseObj.output.push({
+            type: "function_call",
+            id: currentFunctionCallId,
+            call_id: currentFunctionCallId,
+            name: currentFunctionCallName,
+            arguments: currentFunctionCallArguments,
+            status: "completed",
+          });
+
+          events.push({
+            event: "response.output_item.done",
+            data: {
+              type: "response.output_item.done",
+              output_index: outputIndex,
+              item: responseObj.output[responseObj.output.length - 1],
+              sequence_number: nextSeq(),
+            },
+          });
+
+          outputIndex++;
+          currentFunctionCallArguments = "";
+        } else if (currentOutputItemType === "message") {
+          // Close previous message
+          events.push({
+            event: "response.output_text.done",
+            data: {
+              type: "response.output_text.done",
+              output_index: outputIndex,
+              content_index: 0,
+              text: textContent,
+              item_id: currentMessageId,
+              sequence_number: nextSeq(),
+            },
+          });
+
+          events.push({
+            event: "response.content_part.done",
+            data: {
+              type: "response.content_part.done",
+              output_index: outputIndex,
+              content_index: 0,
+              part: { type: "output_text", text: textContent, annotations: [] },
+              item_id: currentMessageId,
+              sequence_number: nextSeq(),
+            },
+          });
+
+          responseObj.output.push({
+            type: "message",
+            id: currentMessageId,
+            role: "assistant",
+            content: [{ type: "output_text", text: textContent, annotations: [] }],
+            status: "completed",
+          });
+
+          events.push({
+            event: "response.output_item.done",
+            data: {
+              type: "response.output_item.done",
+              output_index: outputIndex,
+              item: responseObj.output[responseObj.output.length - 1],
+              sequence_number: nextSeq(),
+            },
+          });
+
+          outputIndex++;
+        }
+
+        // Start a new reasoning output item
+        currentOutputItemType = "reasoning";
+        currentReasoningId = `rs_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
+        reasoningContent = "";
+
+        events.push({
+          event: "response.output_item.added",
+          data: {
+            type: "response.output_item.added",
+            output_index: outputIndex,
+            item: {
+              type: "reasoning",
+              id: currentReasoningId,
+              summary: [],
+              content: [],
+              status: "in_progress",
+            },
+            sequence_number: nextSeq(),
+          },
+        });
+      }
+
+      reasoningContent += delta.reasoning_content;
+
+      events.push({
+        event: "response.reasoning_text.delta",
+        data: {
+          type: "response.reasoning_text.delta",
+          output_index: outputIndex,
+          content_index: 0,
+          delta: delta.reasoning_content,
+          item_id: currentReasoningId,
+          sequence_number: nextSeq(),
+        },
+      });
+    }
+
     // Handle text content
-    // Note: reasoning_content (thinking tokens) is silently dropped —
-    // the Responses API has a separate reasoning item type, but Codex App
-    // doesn't expect it in this adaptation layer. Only emit real content.
-    if (delta.content != null) {
+    if (delta.content != null && delta.content !== "") {
       if (currentOutputItemType !== "message") {
+        // Close previous reasoning if any
+        if (currentOutputItemType === "reasoning") {
+          events.push({
+            event: "response.reasoning_text.done",
+            data: {
+              type: "response.reasoning_text.done",
+              output_index: outputIndex,
+              content_index: 0,
+              text: reasoningContent,
+              item_id: currentReasoningId,
+              sequence_number: nextSeq(),
+            },
+          });
+
+          responseObj.output.push({
+            type: "reasoning",
+            id: currentReasoningId,
+            summary: [],
+            content: [{ type: "reasoning_text", text: reasoningContent }],
+            status: "completed",
+          });
+
+          events.push({
+            event: "response.output_item.done",
+            data: {
+              type: "response.output_item.done",
+              output_index: outputIndex,
+              item: responseObj.output[responseObj.output.length - 1],
+              sequence_number: nextSeq(),
+            },
+          });
+
+          outputIndex++;
+        }
+
         // Close previous function call if any
         if (currentOutputItemType === "function_call") {
           events.push({
@@ -1036,6 +1231,12 @@ function createChatToResponsesTransform(requestBody) {
     // ends abruptly (no [DONE]) — that's handled by the flush logic.
     void finishReason;
 
+    if (process.env.DEBUG_SSE === "1" && events.length > 0) {
+      for (const e of events) {
+        console.log(`[proxy] emit: ${e.event}`);
+      }
+    }
+
     for (const encoded of emitEvents(events)) {
       controller.enqueue(encoded);
     }
@@ -1071,7 +1272,37 @@ function createChatToResponsesTransform(requestBody) {
       if (started && responseObj.status !== "completed") {
         const events = [];
 
-        if (currentOutputItemType === "message" && textContent) {
+        if (currentOutputItemType === "reasoning") {
+          events.push({
+            event: "response.reasoning_text.done",
+            data: {
+              type: "response.reasoning_text.done",
+              output_index: outputIndex,
+              content_index: 0,
+              text: reasoningContent,
+              item_id: currentReasoningId,
+              sequence_number: nextSeq(),
+            },
+          });
+
+          responseObj.output.push({
+            type: "reasoning",
+            id: currentReasoningId,
+            summary: [],
+            content: [{ type: "reasoning_text", text: reasoningContent }],
+            status: "completed",
+          });
+
+          events.push({
+            event: "response.output_item.done",
+            data: {
+              type: "response.output_item.done",
+              output_index: outputIndex,
+              item: responseObj.output[responseObj.output.length - 1],
+              sequence_number: nextSeq(),
+            },
+          });
+        } else if (currentOutputItemType === "message" && textContent) {
           events.push({
             event: "response.output_text.done",
             data: {
@@ -1320,8 +1551,51 @@ function convertChatCompletionJsonToResponsesSSE(chatBody, requestBody) {
     }
   }
 
+  // Handle reasoning_content (thinking tokens)
+  if (message.reasoning_content != null && message.reasoning_content !== "") {
+    const rsId = `rs_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
+    const reasoningText = typeof message.reasoning_content === "string" ? message.reasoning_content : String(message.reasoning_content);
+
+    events.push(formatSSE("response.output_item.added", {
+      type: "response.output_item.added",
+      output_index: outputIndex,
+      item: { type: "reasoning", id: rsId, summary: [], content: [], status: "in_progress" },
+      sequence_number: nextSeq(),
+    }));
+
+    events.push(formatSSE("response.reasoning_text.delta", {
+      type: "response.reasoning_text.delta",
+      output_index: outputIndex,
+      content_index: 0,
+      delta: reasoningText,
+      item_id: rsId,
+      sequence_number: nextSeq(),
+    }));
+
+    events.push(formatSSE("response.reasoning_text.done", {
+      type: "response.reasoning_text.done",
+      output_index: outputIndex,
+      content_index: 0,
+      text: reasoningText,
+      item_id: rsId,
+      sequence_number: nextSeq(),
+    }));
+
+    const rsOutputItem = { type: "reasoning", id: rsId, summary: [], content: [{ type: "reasoning_text", text: reasoningText }], status: "completed" };
+    responseObj.output.push(rsOutputItem);
+
+    events.push(formatSSE("response.output_item.done", {
+      type: "response.output_item.done",
+      output_index: outputIndex,
+      item: rsOutputItem,
+      sequence_number: nextSeq(),
+    }));
+
+    outputIndex++;
+  }
+
   // Handle text content
-  if (message.content != null) {
+  if (message.content != null && message.content !== "") {
     const msgId = `msg_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
     const text = typeof message.content === "string" ? message.content : String(message.content);
 
