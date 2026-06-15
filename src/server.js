@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { createGunzip, createInflate } from "node:zlib";
+import { decompress as zstdDecompress } from "fzstd";
 import { readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import http from "node:http";
@@ -1489,6 +1491,59 @@ async function readRequestBody(req) {
   return Buffer.concat(chunks);
 }
 
+function decompressBuffer(buffer, contentEncoding) {
+  const encodings = contentEncoding
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean)
+    .reverse(); // decompress in reverse order (outermost first)
+
+  let result = Promise.resolve(buffer);
+
+  for (const encoding of encodings) {
+    if (encoding === "gzip" || encoding === "x-gzip") {
+      result = result.then((buf) => gunzipBuffer(buf));
+    } else if (encoding === "deflate" || encoding === "x-deflate") {
+      result = result.then((buf) => inflateBuffer(buf));
+    } else if (encoding === "zstd") {
+      result = result.then((buf) => zstdDecompressBuffer(buf));
+    } else if (encoding === "identity") {
+      // no-op
+    } else {
+      return Promise.reject(new Error(`Unsupported content-encoding: ${encoding}`));
+    }
+  }
+
+  return result;
+}
+
+function gunzipBuffer(buffer) {
+  return new Promise((resolve, reject) => {
+    const gunzip = createGunzip();
+    const chunks = [];
+    gunzip.on("data", (chunk) => chunks.push(chunk));
+    gunzip.on("end", () => resolve(Buffer.concat(chunks)));
+    gunzip.on("error", reject);
+    gunzip.end(buffer);
+  });
+}
+
+function inflateBuffer(buffer) {
+  return new Promise((resolve, reject) => {
+    const inflate = createInflate();
+    const chunks = [];
+    inflate.on("data", (chunk) => chunks.push(chunk));
+    inflate.on("end", () => resolve(Buffer.concat(chunks)));
+    inflate.on("error", reject);
+    inflate.end(buffer);
+  });
+}
+
+function zstdDecompressBuffer(buffer) {
+  const decompressed = zstdDecompress(new Uint8Array(buffer));
+  return Buffer.from(decompressed);
+}
+
 async function writeResponse(res, upstreamResponse) {
   const responseHeaders = Object.fromEntries(upstreamResponse.headers.entries());
 
@@ -1567,17 +1622,17 @@ async function handleRequest(req, res) {
       const contentEncoding = getHeaderValue(req.headers["content-encoding"]);
 
       if (isJsonContentType(contentType)) {
+        // Read the raw body, decompressing gzip/deflate if needed
+        let rawBody;
         if (hasUnsupportedContentEncoding(contentEncoding)) {
-          writeJsonError(
-            res,
-            415,
-            "Cannot safely filter image_generation from encoded JSON request bodies.",
-            "unsupported_content_encoding",
-          );
-          return;
+          // Codex with name = "OpenAI" sends gzip-encoded JSON.
+          // Decompress so we can parse, filter, and forward as uncompressed JSON.
+          console.log(`[proxy] decompressing ${contentEncoding}-encoded JSON request body`);
+          const compressed = await readRequestBody(req);
+          rawBody = await decompressBuffer(compressed, contentEncoding);
+        } else {
+          rawBody = await readRequestBody(req);
         }
-
-        const rawBody = await readRequestBody(req);
 
         if (rawBody.length > 0) {
           const parsed = JSON.parse(rawBody.toString("utf8"));

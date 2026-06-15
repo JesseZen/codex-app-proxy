@@ -12,6 +12,7 @@
     "start:groq": "node scripts/start-provider.js groq",
     "start:shared-chat": "node scripts/start-provider.js shared-chat",
     "start:happycode": "node scripts/start-provider.js happycode",
+    "start:joycode": "node scripts/start-provider.js joycode",
     "start:qs": "node scripts/start-provider.js qs",
     "test": "node --test tests/*.test.js",
     "bench": "node scripts/benchmark.js",
@@ -19,5 +20,8 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "fzstd": "^0.1.1"
   }
 }

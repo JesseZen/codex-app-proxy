@@ -7,6 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { spawn } from "node:child_process";
+import { gzipSync } from "node:zlib";
 
 async function createTempConfig(dirPath) {
   const configPath = path.join(dirPath, "config.toml");
@@ -218,7 +219,7 @@ test("preserves non-JSON request bodies for methods other than POST", async (t) 
   assert.equal(upstream.requests[0].bodyText, payload);
 });
 
-test("rejects encoded JSON bodies that cannot be safely filtered", async (t) => {
+test("decompresses gzip-encoded JSON bodies and filters normally", async (t) => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "codex-proxy-test-"));
   const upstream = await startMockUpstream();
   const configPath = await createTempConfig(tempDir);
@@ -235,20 +236,24 @@ test("rejects encoded JSON bodies that cannot be safely filtered", async (t) => 
     await rm(tempDir, { recursive: true, force: true });
   });
 
+  // Codex with name = "OpenAI" sends gzip-encoded JSON
+  const gzipped = gzipSync(Buffer.from('{"tools":["image_generation"]}'));
+
   const response = await fetch(`http://127.0.0.1:${proxyPort}/v1/responses`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       "content-encoding": "gzip",
     },
-    body: '{"tools":["image_generation"]}',
+    body: gzipped,
   });
 
-  assert.equal(response.status, 415);
-  assert.equal(upstream.requests.length, 0);
-
-  const body = await response.json();
-  assert.equal(body.error.type, "unsupported_content_encoding");
+  // Proxy should decompress, filter image_generation, and forward to upstream
+  assert.equal(response.status, 200);
+  assert.equal(upstream.requests.length, 1);
+  // The upstream should receive the filtered (no image_generation) body
+  const upstreamBody = JSON.parse(upstream.requests[0].bodyText);
+  assert.ok(!upstreamBody.tools || !upstreamBody.tools.includes("image_generation"));
 });
 
 test("streams upstream responses back to the client", async (t) => {
