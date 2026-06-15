@@ -859,6 +859,13 @@ function createChatToResponsesTransform(requestBody) {
     const delta = choice.delta || {};
     const finishReason = choice.finish_reason;
 
+    if (process.env.DEBUG_SSE === "1") {
+      const hasContent = delta.content != null && delta.content !== "";
+      const hasReasoning = delta.reasoning_content != null && delta.reasoning_content !== "";
+      const hasToolCalls = !!(delta.tool_calls && delta.tool_calls.length > 0);
+      console.log(`[proxy] delta: content=${hasContent ? JSON.stringify(delta.content).slice(0,50) : "none"} reasoning=${hasReasoning ? JSON.stringify(delta.reasoning_content).slice(0,50) : "none"} tool_calls=${hasToolCalls} finish=${finishReason || "none"}`);
+    }
+
     const events = [];
 
     // Emit initial events on first chunk
@@ -1223,6 +1230,12 @@ function createChatToResponsesTransform(requestBody) {
     // We do, however, want to emit any pending close events if the stream
     // ends abruptly (no [DONE]) — that's handled by the flush logic.
     void finishReason;
+
+    if (process.env.DEBUG_SSE === "1" && events.length > 0) {
+      for (const e of events) {
+        console.log(`[proxy] emit: ${e.event}`);
+      }
+    }
 
     for (const encoded of emitEvents(events)) {
       controller.enqueue(encoded);
