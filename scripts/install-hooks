@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# install-hooks — install git hooks from scripts/hooks/ into .git/hooks/
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+HOOKS_DIR="$SCRIPT_DIR/hooks"
+GIT_HOOKS_DIR="$(git rev-parse --git-dir)/hooks"
+
+for hook in "$HOOKS_DIR"/*; do
+  [[ -f "$hook" ]] || continue
+  name=$(basename "$hook")
+  dest="$GIT_HOOKS_DIR/$name"
+  cp "$hook" "$dest"
+  chmod +x "$dest"
+  echo "installed $name"
+done
+
+echo "done"

@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# pre-commit — auto-bump version before commit is created
+#
+# Behavior:
+#   - Reads .version, auto-increments prerelease number
+#   - Updates cmd/version.go + package.json files
+#   - Stages the changes (git add) so they are included in this commit
+#
+# Skipped on:
+#   - git commit --amend
+#   - git rebase
+
+ROOT_DIR="$(git rev-parse --show-toplevel)"
+SKIP_FILE="$ROOT_DIR/.git/.bump-skip"
+
+# Check skip flag (set by amend detection below or external tools)
+if [[ -f "$SKIP_FILE" ]]; then
+  rm -f "$SKIP_FILE"
+  exit 0
+fi
+
+source "$ROOT_DIR/scripts/version-lib.sh" || exit 1
+
+# Compute next version
+version_next || exit 1
+
+# Update state + source files
+version_write "$NEXT_BASE" "$NEXT_PRE" "$NEXT_NUM"
+version_update_all "$NEXT_VER"
+version_stage
+
+# Store the new version for prepare-commit-msg to use
+echo "$NEXT_VER" > "$ROOT_DIR/.git/.bump-version"

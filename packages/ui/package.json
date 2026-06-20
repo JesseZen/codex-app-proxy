@@ -4,5 +4,6 @@
   "type": "module",
   "exports": {
     "./audio/*": "./src/assets/audio/*"
-  }
+  },
+  "version": "2.0.0-alpha.1"
 }

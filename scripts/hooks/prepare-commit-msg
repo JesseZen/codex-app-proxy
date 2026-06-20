@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# prepare-commit-msg — prepend version to merge commit messages
+#
+# Only prepends [vX.Y.Z] prefix for merge commits.
+# The actual version bump is done in pre-commit hook.
+#
+# Skipped on:
+#   - git commit --amend (COMMIT_SOURCE == "commit")
+#   - git rebase (REBASE_HEAD exists)
+
+COMMIT_MSG_FILE="$1"
+COMMIT_SOURCE="${2:-}"
+
+# Skip amend and rebase
+if [[ "$COMMIT_SOURCE" == "commit" ]] || [[ -f ".git/REBASE_HEAD" ]]; then
+  exit 0
+fi
+
+# Only prepend version for merge commits
+if [[ "$COMMIT_SOURCE" == "merge" ]]; then
+  ROOT_DIR="$(git rev-parse --show-toplevel)"
+  BUMP_VER_FILE="$ROOT_DIR/.git/.bump-version"
+  if [[ -f "$BUMP_VER_FILE" ]]; then
+    VER=$(cat "$BUMP_VER_FILE")
+    TEMP=$(mktemp)
+    echo "[v${VER}]" > "$TEMP"
+    cat "$COMMIT_MSG_FILE" >> "$TEMP"
+    mv "$TEMP" "$COMMIT_MSG_FILE"
+    rm -f "$BUMP_VER_FILE"
+  fi
+fi
