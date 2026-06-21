@@ -11,24 +11,24 @@ Codex App / CLI
       │
       ▼
 ┌──────────┐
-│  Worker   │  ← Listens on a local port, forwards requests to upstream
-│  (proxy)  │  ← Filters image_generation, Chat Completions translation, etc.
+│  Worker  │  ← Listens on a local port, forwards requests to upstream
+│  (proxy) │  ← Filters image_generation, Chat Completions translation, etc.
 └──────────┘
       │
       ▼
 ┌──────────┐
-│ Upstream  │  ← Upstream API service (OpenAI, OpenRouter, Groq, etc.)
+│ Upstream │  ← Upstream API service (OpenAI, OpenRouter, Groq, etc.)
 └──────────┘
 
 ┌──────────┐
-│ Manager   │  ← Manages Worker lifecycle, exposes HTTP API + SSE event stream
-│           │  ← TUI communicates with Manager via API
+│ Manager  │  ← Manages Worker lifecycle, exposes HTTP API + SSE event stream
+│          │  ← TUI communicates with Manager via API
 └──────────┘
       │
       ▼
 ┌──────────┐
-│   TUI     │  ← OpenTUI (SolidJS) terminal interface
-│ (OpenTUI/TS)  │  ← Conversational interaction, type / to trigger commands
+│   TUI    │  ← OpenTUI (SolidJS) terminal interface
+│(OpenTUI) │  ← Conversational interaction, type / to trigger commands
 └──────────┘
 ```
 
@@ -53,27 +53,28 @@ Each Worker is bound to one Upstream. You can run multiple Workers pointing to d
 ### Build
 
 ```bash
+
+# Install TUI dependencies
+bun install
+
+# Build Go binary
 go build -o codex-proxy .
+
 ```
 
 ### Configuration
 
 ```bash
-cp config.example.yaml config.yaml
-# Edit config.yaml to set workers and providers
-# API keys are referenced via environment variables: api_key_ref: ${OPENAI_API_KEY}
-```
+mkdir -p ${HOME}/.codex-proxy
 
-```bash
-# Export your API keys
-export OPENAI_API_KEY=sk-xxx
-export OPENROUTER_API_KEY=sk-or-xxx
+cp config.example.yaml ${HOME}/.codex-proxy/config.yaml
+# Edit ${HOME}/.codex-proxy/config.yaml to set workers and providers
 ```
 
 ### Run
 
 ```bash
-./codex-proxy --config config.yaml
+./codex-proxy
 ```
 
 This single command starts the Manager → starts all Workers → starts the TUI.
@@ -85,8 +86,8 @@ This single command starts the Manager → starts all Workers → starts the TUI
 ./codex-proxy --config config.yaml --manager-port 8080 &
 
 # Terminal 2: TUI with hot reload
-cd tui && bun install
-CODEX_PROXY_URL=http://localhost:8080 bun run dev
+bun install  # Install dependencies from project root (required first time)
+cd tui && CODEX_PROXY_URL=http://localhost:8080 bun run dev
 ```
 
 ## TUI Operations
