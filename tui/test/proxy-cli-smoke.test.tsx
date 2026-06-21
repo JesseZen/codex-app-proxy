@@ -36,15 +36,17 @@ test("proxy tui home screen renders visible content after startup", async () => 
     )
 
     await ready
-    await setup.renderOnce()
-    await setup.renderOnce()
-    const frame = setup.captureCharFrame()
+    let frame = ""
+    const deadline = Date.now() + 5000
+    while (Date.now() < deadline) {
+      await setup.renderOnce()
+      frame = setup.captureCharFrame()
+      if (frame.includes("Ask anything")) break
+    }
     setup.renderer.destroy()
     await task
 
-    expect(frame.includes("OpenCode") || frame.includes("Fix a TODO") || frame.includes("What is the tech stack")).toBe(
-      true,
-    )
+    expect(frame.includes("Ask anything")).toBe(true)
   } finally {
     if (!setup.renderer.isDestroyed) setup.renderer.destroy()
     mock.restore()
