@@ -2,7 +2,7 @@
 
 **English** | [中文](./README.md)
 
-Codex App 的本地代理管理器。单个二进制文件即可启动 Manager + Workers + TUI。
+一个面向 Codex App 的本地代理管理器。单个二进制文件启动 Manager + Workers + TUI。
 
 ## 架构
 
@@ -36,28 +36,28 @@ Codex App / CLI
 
 | 概念 | 描述 |
 |---------|-------------|
-| **Manager** | 中央管理器 — 启动/停止 Workers，提供 HTTP API，TUI 连接到它 |
-| **Worker** | 在端口上监听的本地代理进程，将请求转发到指定的 Upstream |
-| **Upstream** | 上游 API 服务配置 (base_url, api_key, api_format) |
-| **Module** | Worker 功能模块: `config_patch` (自动修改 Codex 配置), `image_filter` (过滤图片生成), `api_translate` (Chat Completions 翻译) |
+| **Manager** | 中心管理器 — 启动/停止 Workers，提供 HTTP API，TUI 连接到它 |
+| **Worker** | 监听某个端口的本地代理进程，将请求转发到指定的 Upstream |
+| **Upstream** | 上游 API 服务配置（base_url，api_key，api_format） |
+| **Module** | Worker 功能模块：`config_patch`（自动修改 Codex 配置），`image_filter`（过滤图像生成），`api_translate`（聊天补全翻译） |
 
-每个 Worker 绑定到一个 Upstream。你可以同时运行多个 Worker，指向不同端口上的不同 Upstreams。
+每个 Worker 绑定到一个 Upstream。你可以同时运行多个 Worker，分别指向不同端口上的不同 Upstream。
 
 ## 构建与运行
 
 ### 先决条件
 
 - Go 1.26+
-- Bun 1.2+ (用于 TUI)
+- Bun 1.2+（用于 TUI）
 
 ### 构建
 
 ```bash
 
-# 安装 TUI 依赖项
+# 安装TUI依赖项
 bun install
 
-# 构建 Go 二进制文件
+# 构建Go二进制文件
 go build -o codex-proxy .
 
 ```
@@ -68,7 +68,7 @@ go build -o codex-proxy .
 mkdir -p ${HOME}/.codex-proxy
 
 cp config.example.yaml ${HOME}/.codex-proxy/config.yaml
-# 编辑 ${HOME}/.codex-proxy/config.yaml 来设置 workers 和 upstreams
+# 编辑 ${HOME}/.codex-proxy/config.yaml 以设置工作进程和上游服务
 ```
 
 ### 运行
@@ -77,22 +77,22 @@ cp config.example.yaml ${HOME}/.codex-proxy/config.yaml
 ./codex-proxy
 ```
 
-这个单一命令会启动 Manager → 启动所有 Workers → 启动 TUI。
+这个单一命令将启动 Manager → 启动所有 Workers → 启动 TUI。
 
-### 开发模式 (前后端分离)
+### 开发模式（前后端分离）
 
 ```bash
 # 终端1：仅后端
 ./codex-proxy --config config.yaml --manager-port 8080 &
 
-# 终端2：带热重载的TUI界面
-bun install  # 从项目根目录安装依赖（首次运行必需）
+# 终端2：TUI，支持热重载
+bun install  # 从项目根目录安装依赖（首次运行时必需）
 cd tui && CODEX_PROXY_URL=http://localhost:8080 bun run dev
 ```
 
 ## TUI 操作
 
-启动后，你会看到一个底部带有输入栏的空白屏幕。输入 `/` 打开带有模糊搜索的命令选择器。
+启动后，你会看到一个空白屏幕，底部有一个输入栏。输入 `/` 会打开带有模糊搜索的命令选择器。
 
 ### 命令列表
 
@@ -100,10 +100,10 @@ cd tui && CODEX_PROXY_URL=http://localhost:8080 bun run dev
 |---------|-------|-------------|
 | `/help` | | 显示所有命令 |
 | `/status` | | 查看 Workers、Upstreams 和配置状态 |
-| `/config` | `/settings` | 修改配置 (选择类别 → 对象 → 字段 → 更改值) |
+| `/config` | `/settings` | 修改配置（选择类别 → 对象 → 字段 → 更改值） |
 | `/new` | | 创建一个新的 Worker |
-| `/restart` | | 重启 Worker |
-| `/stop` | | 停止 Worker |
+| `/restart` | | 重启一个 Worker |
+| `/stop` | | 停止一个 Worker |
 | `/logs` | | 查看 Worker 日志 |
 | `/stream` | | 切换 SSE 事件流面板 |
 | `/clear` | | 清屏 |
@@ -159,7 +159,7 @@ upstreams:
     # No api_format = native Responses API passthrough
 ```
 
-将 `api_format` 留空或未设置 = 原生透传，无翻译。
+将 `api_format` 留空或不设置 = 原生直通，不进行翻译。
 
 ## 测试
 
@@ -167,7 +167,7 @@ upstreams:
 # Go后端
 go test ./...
 
-# 终端用户界面
+# TUI
 cd tui && bun test
 
 # 类型检查
@@ -183,13 +183,13 @@ cd tui && bun run typecheck
 
 ## 许可证
 
-本项目根据 MIT 许可证授权 — 详情请参阅 [LICENSE](../../LICENSE) 文件。
+本项目依据 MIT 许可证授权 — 详情请参见 [LICENSE](../../LICENSE) 文件。
 
 ## 归属
 
-本项目是 [anomalyco](https://github.com/anomalyco) 开发的 [opencode](https://github.com/anomalyco/opencode) 的一个定制分支，在 [MIT 许可证](https://github.com/anomalyco/opencode/blob/main/LICENSE) 下使用。
+本项目是 [anomalyco](https://github.com/anomalyco) 的 [opencode](https://github.com/anomalyco/opencode) 的一个定制化分支，依据 [MIT 许可证](https://github.com/anomalyco/opencode/blob/main/LICENSE) 使用。
 
-原始的 opencode 源代码已被修改，以用作 Codex App 的本地代理管理器。
+原始的 opencode 源代码已被修改，以作为 Codex App 的本地代理管理器。
 
 ---
 
