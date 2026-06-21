@@ -3,7 +3,7 @@ import { useSDK } from "../context/sdk"
 import { EscHint, useDialog } from "../ui/dialog"
 import { useTheme } from "../context/theme"
 import { useTerminalDimensions } from "@opentui/solid"
-import { createSignal, onMount, onCleanup, For, Show } from "solid-js"
+import { createSignal, onMount, onCleanup, For, Show, batch } from "solid-js"
 import type { WorkerSummary } from "../context/sdk"
 
 export function DialogLogs(props: { worker: WorkerSummary; initialLines?: string[] }) {
@@ -45,12 +45,19 @@ export function DialogLogs(props: { worker: WorkerSummary; initialLines?: string
           buffer += decoder.decode(value, { stream: true })
           const splitLines = buffer.split("\n")
           buffer = splitLines.pop() ?? ""
+          const incoming: string[] = []
           for (const line of splitLines) {
             if (line.startsWith("data: ")) {
               const payload = JSON.parse(line.slice(6)) as { line?: string }
               if (typeof payload.line !== "string") continue
-              setLines((prev) => [...prev.slice(-499), payload.line!])
+              incoming.push(payload.line)
             }
+          }
+          if (incoming.length > 0) {
+            const take = Math.min(incoming.length, 500)
+            batch(() => {
+              setLines((prev) => [...prev.slice(-(500 - take)), ...incoming.slice(-take)])
+            })
           }
         }
       })

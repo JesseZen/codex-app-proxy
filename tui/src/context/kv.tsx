@@ -1,4 +1,4 @@
-import { createSignal, type Setter } from "solid-js"
+import { createSignal, onCleanup, type Setter } from "solid-js"
 import { createStore, unwrap } from "solid-js/store"
 import { createSimpleContext } from "./helper"
 import { Flock } from "@codex-proxy/core/util/flock"
@@ -16,8 +16,6 @@ export const { use: useKV, provider: KVProvider } = createSimpleContext({
     const lock = `tui-kv:${file}`
     const [ready, setReady] = createSignal(false)
     const [store, setStore] = createStore<Record<string, any>>()
-    // Queue same-process writes so rapid updates persist in order.
-    let write = Promise.resolve()
 
     Flock.withLock(lock, () => readJson<Record<string, unknown>>(file))
       .then((x) => {
@@ -29,6 +27,34 @@ export const { use: useKV, provider: KVProvider } = createSimpleContext({
       .finally(() => {
         setReady(true)
       })
+
+    // Queue same-process writes so rapid updates persist in order.
+    let write = Promise.resolve()
+    let flushTimer: ReturnType<typeof setTimeout> | undefined
+    const FLUSH_DEBOUNCE_MS = 200
+
+    function scheduleFlush() {
+      if (flushTimer) return
+      flushTimer = setTimeout(flush, FLUSH_DEBOUNCE_MS)
+    }
+
+    function flush() {
+      flushTimer = undefined
+      const snapshot = structuredClone(unwrap(store))
+      write = write
+        .then(() => Flock.withLock(lock, () => writeJsonAtomic(file, snapshot)))
+        .catch((error) => {
+          console.error("Failed to write KV state", { error })
+        })
+    }
+
+    onCleanup(() => {
+      if (flushTimer) {
+        clearTimeout(flushTimer)
+        flushTimer = undefined
+        flush()
+      }
+    })
 
     const result = {
       get ready() {
@@ -53,12 +79,7 @@ export const { use: useKV, provider: KVProvider } = createSimpleContext({
       },
       set(key: string, value: any) {
         setStore(key, value)
-        const snapshot = structuredClone(unwrap(store))
-        write = write
-          .then(() => Flock.withLock(lock, () => writeJsonAtomic(file, snapshot)))
-          .catch((error) => {
-            console.error("Failed to write KV state", { error })
-          })
+        scheduleFlush()
       },
     }
     return result

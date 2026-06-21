@@ -543,7 +543,7 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
     if (workspace?.type !== "worktree" || !workspace.directory) return
     return workspace
   })
-  const appCommands = createMemo(() =>
+  const staticCommands = createMemo(() =>
     [
       {
         name: COMMAND_PALETTE_COMMAND,
@@ -898,6 +898,16 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
           dialog.clear()
         },
       },
+    ].map((command) => ({
+      namespace: "palette",
+      ...command,
+    })),
+  )
+
+  // Toggle commands are isolated into their own memo so that flipping a KV-backed
+  // preference only rebuilds these few closures, not the whole palette.
+  const toggleCommands = createMemo(() =>
+    [
       {
         name: "app.toggle.animations",
         title: kv.get("animations_enabled", true) ? "Disable animations" : "Enable animations",
@@ -956,6 +966,8 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
       ...command,
     })),
   )
+
+  const appCommands = createMemo(() => [...staticCommands(), ...toggleCommands()])
 
   useBindings(() => ({
     commands: appCommands(),
