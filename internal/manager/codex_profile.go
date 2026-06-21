@@ -21,7 +21,7 @@ type codexProfileEntry struct {
 	WireAPI string `toml:"wire_api,omitempty"`
 }
 
-func writeCodexProfileFile(name string, profile config.ProviderProfile) error {
+func writeCodexProfileFile(name string, profile config.UpstreamProfile) error {
 	encoded, err := toml.Marshal(codexProfileFile{
 		ModelProvider: name,
 		ModelProviders: map[string]codexProfileEntry{
@@ -44,7 +44,7 @@ func codexProfilePath(name string) string {
 
 func syncCodexProfileFiles(cfg config.Config) error {
 	for name, worker := range cfg.Workers {
-		profile := cfg.Providers[worker.Provider]
+		profile := cfg.Upstreams[worker.Upstream]
 		profile.BaseURL = fmt.Sprintf("http://%s:%d", constants.LocalhostAddr, worker.Port)
 		if err := writeCodexProfileFile(name, profile); err != nil {
 			return fmt.Errorf("write profile %s: %w", name, err)

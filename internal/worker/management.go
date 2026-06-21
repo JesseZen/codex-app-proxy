@@ -8,7 +8,7 @@ import (
 
 	"github.com/jesse/codex-app-proxy/internal/constants"
 	"github.com/jesse/codex-app-proxy/internal/module"
-	"github.com/jesse/codex-app-proxy/internal/provider"
+	"github.com/jesse/codex-app-proxy/internal/upstream"
 )
 
 func (w *Worker) serveManagement(rw http.ResponseWriter, r *http.Request) {
@@ -39,7 +39,7 @@ func (w *Worker) writeStatus(rw http.ResponseWriter) {
 	snapshot := w.snapshots.Load()
 	status := map[string]any{
 		"snapshot_generation": snapshot.Generation,
-		"provider":            snapshot.Provider.Redacted(),
+		"upstream":            snapshot.Upstream.Redacted(),
 		"modules":             moduleStates(snapshot.Modules),
 	}
 	if snapshot.ConfigPatchState != "" && snapshot.ConfigPatchState != module.ConfigPatchClean {
@@ -53,7 +53,7 @@ func (w *Worker) writeStatus(rw http.ResponseWriter) {
 
 func (w *Worker) handleSwitch(rw http.ResponseWriter, r *http.Request) {
 	var payload struct {
-		Provider provider.RuntimeProvider `json:"provider"`
+		Upstream upstream.RuntimeUpstream `json:"upstream"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		writeJSON(rw, http.StatusBadRequest, map[string]any{"error": "invalid JSON"})
@@ -63,7 +63,7 @@ func (w *Worker) handleSwitch(rw http.ResponseWriter, r *http.Request) {
 	current := w.snapshots.Load()
 	next := current
 	next.Generation = current.Generation + 1
-	next.Provider = payload.Provider
+	next.Upstream = payload.Upstream
 	if err := next.Validate(); err != nil {
 		writeJSON(rw, http.StatusBadRequest, map[string]any{"error": err.Error(), "snapshot_generation": current.Generation})
 		return
@@ -71,7 +71,7 @@ func (w *Worker) handleSwitch(rw http.ResponseWriter, r *http.Request) {
 	w.snapshots.Store(next)
 	writeJSON(rw, http.StatusOK, map[string]any{
 		"snapshot_generation": next.Generation,
-		"provider":            next.Provider.Redacted(),
+		"upstream":            next.Upstream.Redacted(),
 	})
 }
 

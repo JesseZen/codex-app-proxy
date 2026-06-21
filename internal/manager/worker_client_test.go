@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/jesse/codex-app-proxy/internal/config"
-	"github.com/jesse/codex-app-proxy/internal/provider"
+	"github.com/jesse/codex-app-proxy/internal/upstream"
 )
 
 func TestHTTPWorkerClientPatchesAndTogglesWorkerModules(t *testing.T) {
@@ -29,13 +29,13 @@ func TestHTTPWorkerClientPatchesAndTogglesWorkerModules(t *testing.T) {
 			sawToggle = true
 		case r.Method == http.MethodPost && r.URL.Path == "/_proxy/switch":
 			var payload struct {
-				Provider provider.RuntimeProvider `json:"provider"`
+				Upstream upstream.RuntimeUpstream `json:"upstream"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				t.Fatal(err)
 			}
-			if payload.Provider.Name != "openai" || payload.Provider.APIKey != "sk-live" {
-				t.Fatalf("bad provider payload: %#v", payload.Provider)
+			if payload.Upstream.Name != "openai" || payload.Upstream.APIKey != "sk-live" {
+				t.Fatalf("bad provider payload: %#v", payload.Upstream)
 			}
 		default:
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
@@ -52,7 +52,7 @@ func TestHTTPWorkerClientPatchesAndTogglesWorkerModules(t *testing.T) {
 	if err := client.ToggleModule(port, "image_filter"); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.SwitchProvider(port, provider.RuntimeProvider{Name: "openai", BaseURL: "https://api.openai.com/v1", APIKey: "sk-live"}); err != nil {
+	if err := client.SwitchUpstream(port, upstream.RuntimeUpstream{Name: "openai", BaseURL: "https://api.openai.com/v1", APIKey: "sk-live"}); err != nil {
 		t.Fatal(err)
 	}
 	if !sawPatch || !sawToggle {

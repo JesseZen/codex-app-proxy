@@ -3,7 +3,7 @@ defaults:
 workers:
     cli-groq:
         port: 11200
-        provider: groq
+        upstream: groq
         log_level: simple
         modules:
             api_translate:
@@ -12,7 +12,7 @@ workers:
                 enabled: false
     cli-openrouter:
         port: 11199
-        provider: openrouter
+        upstream: openrouter
         log_level: simple
         modules:
             api_translate:
@@ -21,7 +21,7 @@ workers:
                 enabled: true
     codex-app:
         port: 6767
-        provider: joycode
+        upstream: joycode
         log_level: simple
         modules:
             api_translate:
@@ -31,7 +31,7 @@ workers:
                 config_path: ~/.codex/config.toml
             image_filter:
                 enabled: true
-providers:
+upstreams:
     custom:
         base_url: ""
         api_key: ""

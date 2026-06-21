@@ -205,11 +205,11 @@ func ignoreManagedStopExit(err error) error {
 type workerRuntimeConfig struct {
 	Port     int                     `json:"port"`
 	Role     string                  `json:"role,omitempty"`
-	Provider providerRuntimeForJSON  `json:"provider"`
+	Upstream upstreamRuntimeForJSON  `json:"upstream"`
 	Modules  map[string]configModule `json:"modules,omitempty"`
 }
 
-type providerRuntimeForJSON struct {
+type upstreamRuntimeForJSON struct {
 	Name      string `json:"name"`
 	BaseURL   string `json:"base_url"`
 	APIKey    string `json:"api_key,omitempty"`
@@ -226,18 +226,18 @@ func (m *Manager) BuildWorkerSpawn(workerName string) (WorkerSpawn, error) {
 	if !ok {
 		return WorkerSpawn{}, fmt.Errorf("worker %q not found", workerName)
 	}
-	runtimeProvider, err := m.resolveProvider(worker.Provider)
+	runtimeUpstream, err := m.resolveUpstream(worker.Upstream)
 	if err != nil {
 		return WorkerSpawn{}, err
 	}
 	runtime := workerRuntimeConfig{
 		Port: worker.Port,
 		Role: worker.Role,
-		Provider: providerRuntimeForJSON{
-			Name:      runtimeProvider.Name,
-			BaseURL:   runtimeProvider.BaseURL,
-			APIKey:    runtimeProvider.APIKey,
-			APIFormat: runtimeProvider.APIFormat,
+		Upstream: upstreamRuntimeForJSON{
+			Name:      runtimeUpstream.Name,
+			BaseURL:   runtimeUpstream.BaseURL,
+			APIKey:    runtimeUpstream.APIKey,
+			APIFormat: runtimeUpstream.APIFormat,
 		},
 		Modules: map[string]configModule{},
 	}

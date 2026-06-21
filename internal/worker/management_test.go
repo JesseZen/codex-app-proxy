@@ -8,14 +8,14 @@ import (
 	"testing"
 
 	"github.com/jesse/codex-app-proxy/internal/module"
-	"github.com/jesse/codex-app-proxy/internal/provider"
+	"github.com/jesse/codex-app-proxy/internal/upstream"
 )
 
 func TestWorkerManagementStatusRedactsSecretsAndIncludesGeneration(t *testing.T) {
 	w := New(Options{
 		Snapshot: RuntimeConfigSnapshot{
 			Generation: 7,
-			Provider: provider.RuntimeProvider{
+			Upstream: upstream.RuntimeUpstream{
 				Name:      "openai",
 				BaseURL:   "https://api.openai.com/v1",
 				APIKey:    "sk-secret",
@@ -41,9 +41,9 @@ func TestWorkerManagementStatusRedactsSecretsAndIncludesGeneration(t *testing.T)
 	if body["snapshot_generation"].(float64) != 7 {
 		t.Fatalf("missing generation: %#v", body)
 	}
-	providerBody := body["provider"].(map[string]any)
-	if providerBody["has_api_key"] != true || providerBody["api_key"] != nil {
-		t.Fatalf("bad provider redaction: %#v", providerBody)
+	upstreamBody := body["upstream"].(map[string]any)
+	if upstreamBody["has_api_key"] != true || upstreamBody["api_key"] != nil {
+		t.Fatalf("bad upstream redaction: %#v", upstreamBody)
 	}
 }
 
@@ -51,7 +51,7 @@ func TestWorkerManagementStatusIncludesConfigPatchState(t *testing.T) {
 	w := New(Options{
 		Snapshot: RuntimeConfigSnapshot{
 			Generation:       1,
-			Provider:         provider.RuntimeProvider{Name: "openai", BaseURL: "https://api.openai.com/v1"},
+			Upstream:         upstream.RuntimeUpstream{Name: "openai", BaseURL: "https://api.openai.com/v1"},
 			ConfigPatchState: module.ConfigPatchActive,
 		},
 	})
@@ -70,7 +70,7 @@ func TestWorkerManagementStatusIncludesConfigPatchRecoveryDetail(t *testing.T) {
 	w := New(Options{
 		Snapshot: RuntimeConfigSnapshot{
 			Generation:       2,
-			Provider:         provider.RuntimeProvider{Name: "openai", BaseURL: "https://api.openai.com/v1"},
+			Upstream:         upstream.RuntimeUpstream{Name: "openai", BaseURL: "https://api.openai.com/v1"},
 			ConfigPatchState: module.ConfigPatchUnresolved,
 			ConfigPatchDetail: map[string]string{
 				"provider_name":  "test",
@@ -103,12 +103,12 @@ func TestWorkerManagementSwitchValidatesBeforeSwap(t *testing.T) {
 	w := New(Options{
 		Snapshot: RuntimeConfigSnapshot{
 			Generation: 1,
-			Provider:   provider.RuntimeProvider{Name: "old", BaseURL: "https://old.example/v1"},
+			Upstream:   upstream.RuntimeUpstream{Name: "old", BaseURL: "https://old.example/v1"},
 		},
 	})
 
 	invalid := httptest.NewRecorder()
-	w.ServeHTTP(invalid, httptest.NewRequest(http.MethodPost, "http://proxy.local/_proxy/switch", strings.NewReader(`{"provider":{"name":"bad","base_url":""}}`)))
+	w.ServeHTTP(invalid, httptest.NewRequest(http.MethodPost, "http://proxy.local/_proxy/switch", strings.NewReader(`{"upstream":{"name":"bad","base_url":""}}`)))
 	if invalid.Code != http.StatusBadRequest {
 		t.Fatalf("expected invalid switch to fail, got %d: %s", invalid.Code, invalid.Body.String())
 	}
@@ -120,7 +120,7 @@ func TestWorkerManagementSwitchValidatesBeforeSwap(t *testing.T) {
 	}
 
 	valid := httptest.NewRecorder()
-	w.ServeHTTP(valid, httptest.NewRequest(http.MethodPost, "http://proxy.local/_proxy/switch", strings.NewReader(`{"provider":{"name":"new","base_url":"https://new.example/v1","api_format":"chat_completions","api_key":"sk-new"}}`)))
+	w.ServeHTTP(valid, httptest.NewRequest(http.MethodPost, "http://proxy.local/_proxy/switch", strings.NewReader(`{"upstream":{"name":"new","base_url":"https://new.example/v1","api_format":"chat_completions","api_key":"sk-new"}}`)))
 	if valid.Code != http.StatusOK {
 		t.Fatalf("expected valid switch, got %d: %s", valid.Code, valid.Body.String())
 	}
@@ -136,7 +136,7 @@ func TestWorkerManagementModuleToggle(t *testing.T) {
 	w := New(Options{
 		Snapshot: RuntimeConfigSnapshot{
 			Generation: 1,
-			Provider:   provider.RuntimeProvider{Name: "openai", BaseURL: "https://api.openai.com/v1"},
+			Upstream:   upstream.RuntimeUpstream{Name: "openai", BaseURL: "https://api.openai.com/v1"},
 			Modules:    []module.Middleware{module.NewImageFilter(module.ModuleConfig{Enabled: false})},
 		},
 	})
@@ -158,7 +158,7 @@ func TestWorkerManagementModulePatch(t *testing.T) {
 	w := New(Options{
 		Snapshot: RuntimeConfigSnapshot{
 			Generation: 1,
-			Provider:   provider.RuntimeProvider{Name: "openai", BaseURL: "https://api.openai.com/v1"},
+			Upstream:   upstream.RuntimeUpstream{Name: "openai", BaseURL: "https://api.openai.com/v1"},
 			Modules:    []module.Middleware{module.NewModelOverride(module.ModuleConfig{Enabled: false})},
 		},
 	})

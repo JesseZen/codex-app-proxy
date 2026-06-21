@@ -15,11 +15,11 @@ func TestLoadAppliesDefaultsAndKeepsSecretRefs(t *testing.T) {
 workers:
   codex-app:
     port: 6767
-    provider: openai
+    upstream: openai
     modules:
       image_filter:
         enabled: true
-providers:
+upstreams:
   openai:
     base_url: https://api.openai.com/v1
     api_key: plain-key
@@ -36,8 +36,8 @@ providers:
 	if cfg.Defaults.LogDir == "" {
 		t.Fatal("expected default log_dir")
 	}
-	if cfg.Providers["openai"].APIKey != "plain-key" {
-		t.Fatalf("expected plain api key to load, got %#v", cfg.Providers["openai"])
+	if cfg.Upstreams["openai"].APIKey != "plain-key" {
+		t.Fatalf("expected plain api key to load, got %#v", cfg.Upstreams["openai"])
 	}
 	if !cfg.Workers["codex-app"].Modules["image_filter"].Enabled {
 		t.Fatal("expected module enabled")
@@ -54,8 +54,8 @@ func TestLoadFileRemovesStaleConfigTempFiles(t *testing.T) {
 workers:
   app:
     port: 6767
-    provider: openai
-providers:
+    upstream: openai
+upstreams:
   openai:
     base_url: https://api.openai.com/v1
 `), 0600); err != nil {
@@ -79,9 +79,9 @@ func TestAtomicSaveLeavesValidYAMLAndTracksGeneration(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(filepath.Join(dir, "config.yaml"), Config{
 		Workers: map[string]WorkerConfig{
-			"one": {Port: 6767, Provider: "openai"},
+			"one": {Port: 6767, Upstream: "openai"},
 		},
-		Providers: map[string]ProviderProfile{
+		Upstreams: map[string]UpstreamProfile{
 			"openai": {BaseURL: "https://api.openai.com/v1", APIKey: "plain-key"},
 		},
 	})
@@ -109,8 +109,8 @@ func TestAtomicWriteBeforeRenameKeepsPreviousConfigValid(t *testing.T) {
 workers:
   app:
     port: 6767
-    provider: openai
-providers:
+    upstream: openai
+upstreams:
   openai:
     base_url: https://old.example/v1
 `), 0600); err != nil {
@@ -126,8 +126,8 @@ providers:
 workers:
   app:
     port: 6767
-    provider: openai
-providers:
+    upstream: openai
+upstreams:
   openai:
     base_url: https://new.example/v1
 `), 0600)
@@ -139,8 +139,8 @@ providers:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Providers["openai"].BaseURL != "https://old.example/v1" {
-		t.Fatalf("expected previous config to remain valid, got %#v", loaded.Providers["openai"])
+	if loaded.Upstreams["openai"].BaseURL != "https://old.example/v1" {
+		t.Fatalf("expected previous config to remain valid, got %#v", loaded.Upstreams["openai"])
 	}
 }
 
@@ -151,8 +151,8 @@ func TestAtomicWriteAfterRenameStillLeavesLoadableConfig(t *testing.T) {
 workers:
   app:
     port: 6767
-    provider: openai
-providers:
+    upstream: openai
+upstreams:
   openai:
     base_url: https://old.example/v1
 `), 0600); err != nil {
@@ -168,8 +168,8 @@ providers:
 workers:
   app:
     port: 6767
-    provider: openai
-providers:
+    upstream: openai
+upstreams:
   openai:
     base_url: https://new.example/v1
 `), 0600)
@@ -181,8 +181,8 @@ providers:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Providers["openai"].BaseURL != "https://new.example/v1" {
-		t.Fatalf("expected complete renamed config after post-rename failure, got %#v", loaded.Providers["openai"])
+	if loaded.Upstreams["openai"].BaseURL != "https://new.example/v1" {
+		t.Fatalf("expected complete renamed config after post-rename failure, got %#v", loaded.Upstreams["openai"])
 	}
 }
 
@@ -191,9 +191,9 @@ func TestStoreAsyncSaveKeepsDirtyOnFailureAndRetriesLatest(t *testing.T) {
 	path := filepath.Join(dir, "config.yaml")
 	store := NewStore(path, Config{
 		Workers: map[string]WorkerConfig{
-			"one": {Port: 6767, Provider: "openai"},
+			"one": {Port: 6767, Upstream: "openai"},
 		},
-		Providers: map[string]ProviderProfile{
+		Upstreams: map[string]UpstreamProfile{
 			"openai": {BaseURL: "https://api.openai.com/v1"},
 		},
 	})
@@ -201,7 +201,7 @@ func TestStoreAsyncSaveKeepsDirtyOnFailureAndRetriesLatest(t *testing.T) {
 		return errors.New("permission denied")
 	})
 	store.Update(func(cfg *Config) {
-		cfg.Providers["openai"] = ProviderProfile{BaseURL: "https://failed.example/v1"}
+		cfg.Upstreams["openai"] = UpstreamProfile{BaseURL: "https://failed.example/v1"}
 	})
 	if err := store.Save(); err == nil {
 		t.Fatal("expected save failure")
@@ -212,7 +212,7 @@ func TestStoreAsyncSaveKeepsDirtyOnFailureAndRetriesLatest(t *testing.T) {
 
 	store.SetWriterForTest(nil)
 	store.Update(func(cfg *Config) {
-		cfg.Providers["openai"] = ProviderProfile{BaseURL: "https://latest.example/v1"}
+		cfg.Upstreams["openai"] = UpstreamProfile{BaseURL: "https://latest.example/v1"}
 	})
 	if err := store.Save(); err != nil {
 		t.Fatal(err)
@@ -224,8 +224,8 @@ func TestStoreAsyncSaveKeepsDirtyOnFailureAndRetriesLatest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Providers["openai"].BaseURL != "https://latest.example/v1" {
-		t.Fatalf("did not persist latest config: %#v", loaded.Providers["openai"])
+	if loaded.Upstreams["openai"].BaseURL != "https://latest.example/v1" {
+		t.Fatalf("did not persist latest config: %#v", loaded.Upstreams["openai"])
 	}
 }
 
@@ -234,9 +234,9 @@ func TestStoreAsyncWriterDoesNotBlockUpdatesAndPersistsLatest(t *testing.T) {
 	path := filepath.Join(dir, "config.yaml")
 	store := NewStore(path, Config{
 		Workers: map[string]WorkerConfig{
-			"one": {Port: 6767, Provider: "openai"},
+			"one": {Port: 6767, Upstream: "openai"},
 		},
-		Providers: map[string]ProviderProfile{
+		Upstreams: map[string]UpstreamProfile{
 			"openai": {BaseURL: "https://api.openai.com/v1"},
 		},
 	})
@@ -258,7 +258,7 @@ func TestStoreAsyncWriterDoesNotBlockUpdatesAndPersistsLatest(t *testing.T) {
 	defer stop()
 
 	store.Update(func(cfg *Config) {
-		cfg.Providers["openai"] = ProviderProfile{BaseURL: "https://first.example/v1"}
+		cfg.Upstreams["openai"] = UpstreamProfile{BaseURL: "https://first.example/v1"}
 	})
 	select {
 	case <-firstWriteStarted:
@@ -269,7 +269,7 @@ func TestStoreAsyncWriterDoesNotBlockUpdatesAndPersistsLatest(t *testing.T) {
 	updateReturned := make(chan struct{})
 	go func() {
 		store.Update(func(cfg *Config) {
-			cfg.Providers["openai"] = ProviderProfile{BaseURL: "https://latest.example/v1"}
+			cfg.Upstreams["openai"] = UpstreamProfile{BaseURL: "https://latest.example/v1"}
 		})
 		close(updateReturned)
 	}()
@@ -282,7 +282,7 @@ func TestStoreAsyncWriterDoesNotBlockUpdatesAndPersistsLatest(t *testing.T) {
 
 	eventually(t, time.Second, func() bool {
 		loaded, err := LoadFile(path)
-		return err == nil && loaded.Providers["openai"].BaseURL == "https://latest.example/v1" && !store.Status().Dirty
+		return err == nil && loaded.Upstreams["openai"].BaseURL == "https://latest.example/v1" && !store.Status().Dirty
 	})
 }
 

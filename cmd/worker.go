@@ -17,7 +17,7 @@ import (
 
 	"github.com/jesse/codex-app-proxy/internal/constants"
 	"github.com/jesse/codex-app-proxy/internal/module"
-	"github.com/jesse/codex-app-proxy/internal/provider"
+	"github.com/jesse/codex-app-proxy/internal/upstream"
 	"github.com/jesse/codex-app-proxy/internal/worker"
 )
 
@@ -28,7 +28,7 @@ func runWorker(args []string, stdout io.Writer, stderr io.Writer) int {
 type WorkerRuntimeConfig struct {
 	Port     int                            `json:"port"`
 	Role     string                         `json:"role,omitempty"`
-	Provider provider.RuntimeProvider       `json:"provider"`
+	Upstream upstream.RuntimeUpstream       `json:"upstream"`
 	Modules  map[string]module.ModuleConfig `json:"modules,omitempty"`
 }
 
@@ -61,10 +61,10 @@ var (
 )
 
 func runWorkerServer(cfg WorkerRuntimeConfig, stdin *os.File) error {
-	modules := buildModules(cfg.Modules, cfg.Provider.APIFormat)
+	modules := buildModules(cfg.Modules, cfg.Upstream.APIFormat)
 	snapshot := worker.RuntimeConfigSnapshot{
 		Generation: 1,
-		Provider:   cfg.Provider,
+		Upstream:   cfg.Upstream,
 		Modules:    modules,
 	}
 	var patch workerPatch

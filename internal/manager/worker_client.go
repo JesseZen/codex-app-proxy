@@ -8,7 +8,7 @@ import (
 
 	"github.com/jesse/codex-app-proxy/internal/config"
 	"github.com/jesse/codex-app-proxy/internal/constants"
-	"github.com/jesse/codex-app-proxy/internal/provider"
+	"github.com/jesse/codex-app-proxy/internal/upstream"
 )
 
 type HTTPWorkerClient struct {
@@ -38,11 +38,11 @@ func (c HTTPWorkerClient) PatchModule(port int, moduleName string, cfg config.Mo
 	return c.do(req)
 }
 
-func (c HTTPWorkerClient) SwitchProvider(port int, runtime provider.RuntimeProvider) error {
+func (c HTTPWorkerClient) SwitchUpstream(port int, runtime upstream.RuntimeUpstream) error {
 	var body bytes.Buffer
 	if err := json.NewEncoder(&body).Encode(struct {
-		Provider provider.RuntimeProvider `json:"provider"`
-	}{Provider: runtime}); err != nil {
+		Upstream upstream.RuntimeUpstream `json:"upstream"`
+	}{Upstream: runtime}); err != nil {
 		return err
 	}
 	url := fmt.Sprintf("http://%s:%d%s", constants.LocalhostAddr, port, constants.ProxySwitchPath)

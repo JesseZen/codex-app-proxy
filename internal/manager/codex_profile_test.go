@@ -14,7 +14,7 @@ func TestWriteCodexProfileFileUsesResponsesWireAPIForWorkerProfiles(t *testing.T
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	if err := writeCodexProfileFile("cli-openai", config.ProviderProfile{
+	if err := writeCodexProfileFile("cli-openai", config.UpstreamProfile{
 		BaseURL:   "http://127.0.0.1:6767",
 		APIFormat: "chat_completions",
 	}); err != nil {

@@ -23,7 +23,7 @@ const (
 	EventWorkerHealthChanged EventType = "worker.health.changed"
 	EventWorkerUpdated       EventType = "worker.updated"
 	EventModuleUpdated       EventType = "module.updated"
-	EventProviderUpdated     EventType = "provider.updated"
+	EventUpstreamUpdated     EventType = "upstream.updated"
 	EventConfigStatusChanged EventType = "config.status.changed"
 	EventStreamRawRedacted   EventType = "stream.raw_redacted"
 )

@@ -1,4 +1,4 @@
-package provider
+package upstream
 
 import (
 	"testing"
@@ -6,9 +6,9 @@ import (
 	"github.com/jesse/codex-app-proxy/internal/config"
 )
 
-func TestResolveProviderUsesEnvApiKeyFirst(t *testing.T) {
+func TestResolveUpstreamUsesEnvApiKeyFirst(t *testing.T) {
 	t.Setenv("JC_API_KEY", "sk-env")
-	profile := config.ProviderProfile{
+	profile := config.UpstreamProfile{
 		BaseURL: "https://localhost:34891",
 		APIKey:  "sk-file",
 	}
@@ -22,8 +22,8 @@ func TestResolveProviderUsesEnvApiKeyFirst(t *testing.T) {
 	}
 }
 
-func TestResolveProviderFallsBackToConfigApiKey(t *testing.T) {
-	profile := config.ProviderProfile{
+func TestResolveUpstreamFallsBackToConfigApiKey(t *testing.T) {
+	profile := config.UpstreamProfile{
 		BaseURL: "https://localhost:34891",
 		APIKey:  "sk-file",
 	}
@@ -37,9 +37,9 @@ func TestResolveProviderFallsBackToConfigApiKey(t *testing.T) {
 	}
 }
 
-func TestResolveProviderIgnoresLegacyApiKeyRef(t *testing.T) {
+func TestResolveUpstreamIgnoresLegacyApiKeyRef(t *testing.T) {
 	t.Setenv("JC_API_KEY", "")
-	profile := config.ProviderProfile{
+	profile := config.UpstreamProfile{
 		BaseURL: "https://localhost:34891",
 		APIKey:  "sk-file",
 	}
@@ -52,4 +52,3 @@ func TestResolveProviderIgnoresLegacyApiKeyRef(t *testing.T) {
 		t.Fatalf("expected file key with no env override, got %q", runtime.APIKey)
 	}
 }
-

@@ -5,19 +5,19 @@ import (
 	"sync/atomic"
 
 	"github.com/jesse/codex-app-proxy/internal/module"
-	"github.com/jesse/codex-app-proxy/internal/provider"
+	"github.com/jesse/codex-app-proxy/internal/upstream"
 )
 
 type RuntimeConfigSnapshot struct {
 	Generation        int
-	Provider          provider.RuntimeProvider
+	Upstream          upstream.RuntimeUpstream
 	Modules           []module.Middleware
 	ConfigPatchState  module.ConfigPatchState
 	ConfigPatchDetail map[string]string
 }
 
 func (s RuntimeConfigSnapshot) Validate() error {
-	if s.Provider.BaseURL == "" {
+	if s.Upstream.BaseURL == "" {
 		return fmt.Errorf("provider base URL is required")
 	}
 	return nil

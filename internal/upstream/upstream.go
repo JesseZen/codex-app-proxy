@@ -1,4 +1,4 @@
-package provider
+package upstream
 
 import (
 	"os"
@@ -7,14 +7,14 @@ import (
 	"github.com/jesse/codex-app-proxy/internal/config"
 )
 
-type RuntimeProvider struct {
+type RuntimeUpstream struct {
 	Name      string `json:"name"`
 	BaseURL   string `json:"base_url"`
 	APIKey    string `json:"api_key,omitempty"`
 	APIFormat string `json:"api_format,omitempty"`
 }
 
-type RedactedProvider struct {
+type RedactedUpstream struct {
 	Name      string `json:"name"`
 	BaseURL   string `json:"base_url"`
 	APIKey    string `json:"api_key,omitempty"`
@@ -22,11 +22,11 @@ type RedactedProvider struct {
 	APIFormat string `json:"api_format,omitempty"`
 }
 
-func Resolve(name string, profile config.ProviderProfile) (RuntimeProvider, error) {
+func Resolve(name string, profile config.UpstreamProfile) (RuntimeUpstream, error) {
 	if apiKey := runtimeAPIKey(name, profile); apiKey != "" {
-		return RuntimeProvider{Name: name, BaseURL: profile.BaseURL, APIKey: apiKey, APIFormat: profile.APIFormat}, nil
+		return RuntimeUpstream{Name: name, BaseURL: profile.BaseURL, APIKey: apiKey, APIFormat: profile.APIFormat}, nil
 	}
-	return RuntimeProvider{
+	return RuntimeUpstream{
 		Name:      name,
 		BaseURL:   profile.BaseURL,
 		APIKey:    strings.TrimSpace(profile.APIKey),
@@ -34,8 +34,8 @@ func Resolve(name string, profile config.ProviderProfile) (RuntimeProvider, erro
 	}, nil
 }
 
-func (p RuntimeProvider) Redacted() RedactedProvider {
-	return RedactedProvider{
+func (p RuntimeUpstream) Redacted() RedactedUpstream {
+	return RedactedUpstream{
 		Name:      p.Name,
 		BaseURL:   p.BaseURL,
 		HasAPIKey: p.APIKey != "",
@@ -43,8 +43,8 @@ func (p RuntimeProvider) Redacted() RedactedProvider {
 	}
 }
 
-func runtimeAPIKey(providerName string, profile config.ProviderProfile) string {
-	name := strings.ToUpper(strings.TrimSpace(providerName))
+func runtimeAPIKey(upstreamName string, profile config.UpstreamProfile) string {
+	name := strings.ToUpper(strings.TrimSpace(upstreamName))
 	if name == "" {
 		return ""
 	}

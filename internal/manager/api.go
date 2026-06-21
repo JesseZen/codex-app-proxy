@@ -7,15 +7,15 @@ import (
 	"strings"
 
 	"github.com/jesse/codex-app-proxy/internal/config"
-	"github.com/jesse/codex-app-proxy/internal/provider"
+	"github.com/jesse/codex-app-proxy/internal/upstream"
 )
 
 func (m *Manager) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/events", m.handleEvents)
 	mux.HandleFunc("/api/workers", m.handleWorkers)
 	mux.HandleFunc("/api/workers/", m.handleWorkerByPort)
-	mux.HandleFunc("/api/providers", m.handleProviders)
-	mux.HandleFunc("/api/providers/", m.handleProviderByName)
+	mux.HandleFunc("/api/upstreams", m.handleUpstreams)
+	mux.HandleFunc("/api/upstreams/", m.handleUpstreamByName)
 	mux.HandleFunc("/api/config", m.handleConfig)
 }
 
@@ -35,7 +35,7 @@ func (m *Manager) handleCreateWorker(rw http.ResponseWriter, r *http.Request) {
 	var payload struct {
 		Name     string                         `json:"name"`
 		Port     int                            `json:"port"`
-		Provider string                         `json:"provider"`
+		Upstream string                         `json:"upstream"`
 		Modules  map[string]config.ModuleConfig `json:"modules"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -43,7 +43,7 @@ func (m *Manager) handleCreateWorker(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	payload.Name = strings.TrimSpace(payload.Name)
-	payload.Provider = strings.TrimSpace(payload.Provider)
+	payload.Upstream = strings.TrimSpace(payload.Upstream)
 	if payload.Name == "" || strings.Contains(payload.Name, "/") {
 		writeJSON(rw, http.StatusBadRequest, map[string]any{"error": "worker name is required"})
 		return
@@ -52,11 +52,11 @@ func (m *Manager) handleCreateWorker(rw http.ResponseWriter, r *http.Request) {
 		writeJSON(rw, http.StatusBadRequest, map[string]any{"error": "worker port is required"})
 		return
 	}
-	if payload.Provider == "" {
+	if payload.Upstream == "" {
 		writeJSON(rw, http.StatusBadRequest, map[string]any{"error": "worker provider is required"})
 		return
 	}
-	if _, err := m.resolveProvider(payload.Provider); err != nil {
+	if _, err := m.resolveUpstream(payload.Upstream); err != nil {
 		writeJSON(rw, http.StatusBadRequest, map[string]any{"error": redactedErrorMessage(err)})
 		return
 	}
@@ -70,7 +70,7 @@ func (m *Manager) handleCreateWorker(rw http.ResponseWriter, r *http.Request) {
 	}
 	worker := config.WorkerConfig{
 		Port:     payload.Port,
-		Provider: payload.Provider,
+		Upstream: payload.Upstream,
 		Modules:  payload.Modules,
 	}
 	if worker.Modules == nil {
@@ -150,8 +150,8 @@ func (m *Manager) handleWorkerByPort(rw http.ResponseWriter, r *http.Request) {
 			writeJSON(rw, http.StatusBadRequest, map[string]any{"error": "worker port is required"})
 			return
 		}
-		next.Provider = strings.TrimSpace(next.Provider)
-		if next.Provider == "" {
+		next.Upstream = strings.TrimSpace(next.Upstream)
+		if next.Upstream == "" {
 			writeJSON(rw, http.StatusBadRequest, map[string]any{"error": "worker provider is required"})
 			return
 		}
@@ -165,7 +165,7 @@ func (m *Manager) handleWorkerByPort(rw http.ResponseWriter, r *http.Request) {
 			writeJSON(rw, http.StatusBadRequest, map[string]any{"error": "worker log_level must be simple or detail"})
 			return
 		}
-		if _, err := m.resolveProvider(next.Provider); err != nil {
+		if _, err := m.resolveUpstream(next.Upstream); err != nil {
 			writeJSON(rw, http.StatusBadRequest, map[string]any{"error": redactedErrorMessage(err)})
 			return
 		}
@@ -414,14 +414,14 @@ func (m *Manager) toggleLiveWorkerModule(workerName string, port int, moduleName
 	return client.ToggleModule(port, moduleName)
 }
 
-func (m *Manager) handleProviders(rw http.ResponseWriter, r *http.Request) {
+func (m *Manager) handleUpstreams(rw http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.NotFound(rw, r)
 		return
 	}
 	out := map[string]any{}
-	for name, profile := range m.providerProfileSnapshot() {
-		runtime, _ := provider.Resolve(name, profile)
+	for name, profile := range m.upstreamProfileSnapshot() {
+		runtime, _ := upstream.Resolve(name, profile)
 		out[name] = map[string]any{
 			"name":        name,
 			"base_url":    profile.BaseURL,
@@ -432,27 +432,27 @@ func (m *Manager) handleProviders(rw http.ResponseWriter, r *http.Request) {
 	writeJSON(rw, http.StatusOK, map[string]any{"providers": out})
 }
 
-func (m *Manager) handleProviderByName(rw http.ResponseWriter, r *http.Request) {
+func (m *Manager) handleUpstreamByName(rw http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPatch {
 		http.NotFound(rw, r)
 		return
 	}
-	name := strings.TrimPrefix(r.URL.Path, "/api/providers/")
+	name := strings.TrimPrefix(r.URL.Path, "/api/upstreams/")
 	if name == "" || strings.Contains(name, "/") {
 		http.NotFound(rw, r)
 		return
 	}
-	type providerPatch struct {
+	type upstreamPatch struct {
 		BaseURL   *string `json:"base_url,omitempty"`
 		APIKey    *string `json:"api_key,omitempty"`
 		APIFormat *string `json:"api_format,omitempty"`
 	}
-	var patch providerPatch
+	var patch upstreamPatch
 	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 		writeJSON(rw, http.StatusBadRequest, map[string]any{"error": "invalid JSON"})
 		return
 	}
-	current, _ := m.providerProfileSnapshot()[name]
+	current, _ := m.upstreamProfileSnapshot()[name]
 	profile := current
 	if patch.BaseURL != nil {
 		profile.BaseURL = *patch.BaseURL
@@ -463,20 +463,20 @@ func (m *Manager) handleProviderByName(rw http.ResponseWriter, r *http.Request) 
 	if patch.APIFormat != nil {
 		profile.APIFormat = *patch.APIFormat
 	}
-	runtime, err := provider.Resolve(name, profile)
+	runtime, err := upstream.Resolve(name, profile)
 	if err != nil {
 		writeJSON(rw, http.StatusBadRequest, map[string]any{"error": redactedErrorMessage(err)})
 		return
 	}
-	if err := m.switchLiveWorkersUsingProvider(name, runtime); err != nil {
+	if err := m.switchLiveWorkersUsingUpstream(name, runtime); err != nil {
 		writeJSON(rw, http.StatusBadGateway, map[string]any{"error": redactedErrorMessage(err)})
 		return
 	}
 	m.updateConfig(func(cfgRoot *config.Config) {
-		cfgRoot.Providers[name] = profile
+		cfgRoot.Upstreams[name] = profile
 	})
-	m.bumpLiveWorkersUsingProvider(name)
-	m.publishEvent(EventProviderUpdated, map[string]any{"provider": name})
+	m.bumpLiveWorkersUsingUpstream(name)
+	m.publishEvent(EventUpstreamUpdated, map[string]any{"upstream": name})
 	writeJSON(rw, http.StatusOK, map[string]any{
 		"name":        name,
 		"base_url":    profile.BaseURL,
@@ -485,24 +485,24 @@ func (m *Manager) handleProviderByName(rw http.ResponseWriter, r *http.Request) 
 	})
 }
 
-func (m *Manager) switchLiveWorkersUsingProvider(providerName string, runtime provider.RuntimeProvider) error {
+func (m *Manager) switchLiveWorkersUsingUpstream(upstreamName string, runtime upstream.RuntimeUpstream) error {
 	client := m.workerClient
 	if client == nil {
 		client = HTTPWorkerClient{Client: http.DefaultClient}
 	}
-	for _, target := range m.liveWorkersUsingProvider(providerName) {
-		if err := client.SwitchProvider(target.port, runtime); err != nil {
+	for _, target := range m.liveWorkersUsingUpstream(upstreamName) {
+		if err := client.SwitchUpstream(target.port, runtime); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (m *Manager) bumpLiveWorkersUsingProvider(providerName string) {
+func (m *Manager) bumpLiveWorkersUsingUpstream(upstreamName string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for workerName, worker := range m.config.Workers {
-		if worker.Provider == providerName && m.workerStatusLocked(workerName) == WorkerStateRunning {
+		if worker.Upstream == upstreamName && m.workerStatusLocked(workerName) == WorkerStateRunning {
 			m.generations[workerName] = m.workerGenerationLocked(workerName) + 1
 		}
 	}

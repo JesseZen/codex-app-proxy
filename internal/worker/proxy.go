@@ -79,7 +79,7 @@ func (w *Worker) proxyRequest(rw http.ResponseWriter, r *http.Request, snapshot 
 		}
 	}
 
-	upstreamURL, err := joinURL(snapshot.Provider.BaseURL, proxyReq.Path, r.URL.RawQuery)
+	upstreamURL, err := joinURL(snapshot.Upstream.BaseURL, proxyReq.Path, r.URL.RawQuery)
 	if err != nil {
 		return err
 	}
@@ -88,8 +88,8 @@ func (w *Worker) proxyRequest(rw http.ResponseWriter, r *http.Request, snapshot 
 		return err
 	}
 	upstreamReq.Header = proxyReq.Headers.Clone()
-	if snapshot.Provider.APIKey != "" {
-		upstreamReq.Header.Set("Authorization", "Bearer "+snapshot.Provider.APIKey)
+	if snapshot.Upstream.APIKey != "" {
+		upstreamReq.Header.Set("Authorization", "Bearer "+snapshot.Upstream.APIKey)
 	}
 	if len(proxyReq.Body) > 0 {
 		upstreamReq.ContentLength = int64(len(proxyReq.Body))

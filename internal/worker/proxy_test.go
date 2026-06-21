@@ -11,13 +11,13 @@ import (
 	"time"
 
 	"github.com/jesse/codex-app-proxy/internal/module"
-	"github.com/jesse/codex-app-proxy/internal/provider"
+	"github.com/jesse/codex-app-proxy/internal/upstream"
 )
 
 func TestWorkerPassesThroughWithNoModulesAndInjectsAuthorization(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/responses" || r.URL.RawQuery != "x=1" {
-			t.Fatalf("unexpected upstream URL %s", r.URL.String())
+			t.Fatalf("unexpected server URL %s", r.URL.String())
 		}
 		if r.Header.Get("Authorization") != "Bearer test-secret" {
 			t.Fatalf("authorization was not injected: %q", r.Header.Get("Authorization"))
@@ -31,12 +31,12 @@ func TestWorkerPassesThroughWithNoModulesAndInjectsAuthorization(t *testing.T) {
 			"body": string(body),
 		})
 	}))
-	defer upstream.Close()
+	defer server.Close()
 
 	w := New(Options{
 		Snapshot: RuntimeConfigSnapshot{
 			Generation: 1,
-			Provider:   provider.RuntimeProvider{BaseURL: upstream.URL, APIKey: "test-secret"},
+			Upstream:   upstream.RuntimeUpstream{BaseURL: server.URL, APIKey: "test-secret"},
 		},
 	})
 
@@ -72,7 +72,7 @@ func TestWorkerUsesOneSnapshotForWholeRequest(t *testing.T) {
 	w := New(Options{
 		Snapshot: RuntimeConfigSnapshot{
 			Generation: 1,
-			Provider:   provider.RuntimeProvider{BaseURL: first.URL},
+			Upstream:   upstream.RuntimeUpstream{BaseURL: first.URL},
 		},
 	})
 
@@ -86,12 +86,12 @@ func TestWorkerUsesOneSnapshotForWholeRequest(t *testing.T) {
 	select {
 	case <-firstReady:
 	case <-time.After(time.Second):
-		t.Fatal("first upstream did not receive request")
+		t.Fatal("first server did not receive request")
 	}
 
 	if err := w.UpdateSnapshot(RuntimeConfigSnapshot{
 		Generation: 2,
-		Provider:   provider.RuntimeProvider{BaseURL: second.URL},
+		Upstream:   upstream.RuntimeUpstream{BaseURL: second.URL},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -114,19 +114,19 @@ func TestWorkerUsesOneSnapshotForWholeRequest(t *testing.T) {
 }
 
 func TestWorkerRunsModuleChain(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Fatal(err)
 		}
 		_, _ = w.Write(body)
 	}))
-	defer upstream.Close()
+	defer server.Close()
 
 	w := New(Options{
 		Snapshot: RuntimeConfigSnapshot{
 			Generation: 1,
-			Provider:   provider.RuntimeProvider{BaseURL: upstream.URL},
+			Upstream:   upstream.RuntimeUpstream{BaseURL: server.URL},
 			Modules: []module.Middleware{
 				module.NewImageFilter(module.ModuleConfig{Enabled: true}),
 			},

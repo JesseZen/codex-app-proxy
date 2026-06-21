@@ -15,16 +15,16 @@ import (
 
 	"github.com/jesse/codex-app-proxy/internal/config"
 	"github.com/jesse/codex-app-proxy/internal/module"
-	"github.com/jesse/codex-app-proxy/internal/provider"
+	"github.com/jesse/codex-app-proxy/internal/upstream"
 )
 
 func TestManagerDetectsManagedPortConflict(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"one": {Port: 6767, Provider: "openai"},
+				"one": {Port: 6767, Upstream: "openai"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -54,9 +54,9 @@ func TestManagerAPIListsWorkersAndProvidersWithoutSecrets(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"codex-app": {Role: "app", Port: 6767, Provider: "openai"},
+				"codex-app": {Role: "app", Port: 6767, Upstream: "openai"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1", APIKey: "sk-file"},
 			},
 		},
@@ -100,9 +100,9 @@ func TestManagerSyncsCodexProfilesOnStartup(t *testing.T) {
 	New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"cli-openai": {Port: 11199, Provider: "openai"},
+				"cli-openai": {Port: 11199, Upstream: "openai"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1", APIFormat: "responses"},
 			},
 		},
@@ -125,9 +125,9 @@ func TestManagerBuildsWorkerRuntimeConfigForFDWithoutSecretInArgs(t *testing.T) 
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"codex-app": {Role: "app", Port: 6767, Provider: "openai"},
+				"codex-app": {Role: "app", Port: 6767, Upstream: "openai"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1", APIKey: "sk-file"},
 			},
 		},
@@ -158,9 +158,9 @@ func TestManagerStartWorkerUsesProviderSecretWhenConfigured(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"codex-app": {Role: "app", Port: 6767, Provider: "openai"},
+				"codex-app": {Role: "app", Port: 6767, Upstream: "openai"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1", APIKey: "sk-file"},
 			},
 		},
@@ -182,9 +182,9 @@ func TestManagerWorkerSummariesExposeRole(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"codex-app": {Role: "app", Port: 6767, Provider: "openai"},
+				"codex-app": {Role: "app", Port: 6767, Upstream: "openai"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -202,13 +202,13 @@ func TestManagerAPITogglesConfiguredWorkerModule(t *testing.T) {
 			Workers: map[string]config.WorkerConfig{
 				"codex-app": {
 					Port:     6767,
-					Provider: "openai",
+					Upstream: "openai",
 					Modules: map[string]config.ModuleConfig{
 						"image_filter": {Enabled: false},
 					},
 				},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -241,10 +241,10 @@ func TestManagerAPIExposesDisabledBuiltInModulesForTransparentWorker(t *testing.
 			Workers: map[string]config.WorkerConfig{
 				"plain": {
 					Port:     11199,
-					Provider: "openai",
+					Upstream: "openai",
 				},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -273,7 +273,7 @@ func TestManagerAPIWorkerDetailIncludesProviderFieldsAndConfigPatchState(t *test
 			Workers: map[string]config.WorkerConfig{
 				"app": {
 					Port:     6767,
-					Provider: "openai",
+					Upstream: "openai",
 					Modules: map[string]config.ModuleConfig{
 						"config_patch":   {Enabled: true},
 						"model_override": {Enabled: true, Params: map[string]any{"model": "gpt-live"}},
@@ -281,12 +281,12 @@ func TestManagerAPIWorkerDetailIncludesProviderFieldsAndConfigPatchState(t *test
 					LogLevel: "detail",
 				},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1", APIKey: "sk-file", APIFormat: "chat_completions"},
 			},
 		},
 		WorkerClient: &recordingWorkerClient{
-			statusBody: `{"snapshot_generation":7,"provider":{"name":"openai","base_url":"https://api.openai.com/v1","has_api_key":true,"api_format":"chat_completions"},"modules":{"config_patch":{"enabled":true},"model_override":{"enabled":true,"params":{"model":"gpt-live"}}},"config_patch_state":"unresolved","config_patch_detail":{"provider_name":"test","field_name":"base_url","previous_value":"https://example.com/v1","patched_value":"http://127.0.0.1:6767","current_value":"https://manual.example/v1"}}`,
+			statusBody: `{"snapshot_generation":7,"upstream":{"name":"openai","base_url":"https://api.openai.com/v1","has_api_key":true,"api_format":"chat_completions"},"modules":{"config_patch":{"enabled":true},"model_override":{"enabled":true,"params":{"model":"gpt-live"}}},"config_patch_state":"unresolved","config_patch_detail":{"provider_name":"test","field_name":"base_url","previous_value":"https://example.com/v1","patched_value":"http://127.0.0.1:6767","current_value":"https://manual.example/v1"}}`,
 		},
 	})
 	m.statuses["app"] = "running"
@@ -319,19 +319,19 @@ func TestManagerAPIUpdatesWorkerLogLevel(t *testing.T) {
 			Workers: map[string]config.WorkerConfig{
 				"cli": {
 					Port:     11199,
-					Provider: "openai",
+					Upstream: "openai",
 					Modules: map[string]config.ModuleConfig{
 						"api_translate": {Enabled: true},
 					},
 				},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
 	})
 
-	body := strings.NewReader(`{"port":11199,"provider":"openai","log_level":"detail","modules":{"api_translate":{"enabled":true}}}`)
+	body := strings.NewReader(`{"port":11199,"upstream":"openai","log_level":"detail","modules":{"api_translate":{"enabled":true}}}`)
 	res := httptest.NewRecorder()
 	m.ServeHTTP(res, httptest.NewRequest(http.MethodPatch, "http://manager.local/api/workers/11199", body))
 	if res.Code != http.StatusOK {
@@ -355,13 +355,13 @@ func TestManagerAPIPatchesConfiguredWorkerModule(t *testing.T) {
 			Workers: map[string]config.WorkerConfig{
 				"codex-app": {
 					Port:     6767,
-					Provider: "openai",
+					Upstream: "openai",
 					Modules: map[string]config.ModuleConfig{
 						"model_override": {Enabled: false, Params: map[string]any{"model": "old-model"}},
 					},
 				},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -396,20 +396,20 @@ func TestManagerAPIToggleRejectsSecondRunningConfigPatch(t *testing.T) {
 			Workers: map[string]config.WorkerConfig{
 				"codex-app": {
 					Port:     6767,
-					Provider: "openai",
+					Upstream: "openai",
 					Modules: map[string]config.ModuleConfig{
 						"config_patch": {Enabled: true},
 					},
 				},
 				"cli": {
 					Port:     11199,
-					Provider: "openai",
+					Upstream: "openai",
 					Modules: map[string]config.ModuleConfig{
 						"config_patch": {Enabled: false},
 					},
 				},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -433,20 +433,20 @@ func TestManagerAPIToggleRejectsSecondRunningConfigPatch(t *testing.T) {
 
 func TestManagerAPIToggleRejectsConfigPatchWhenWorkerRecoveryStateIsUnresolved(t *testing.T) {
 	client := &recordingWorkerClient{
-		statusBody: `{"snapshot_generation":3,"provider":{"name":"openai","base_url":"https://api.openai.com/v1"},"modules":{"config_patch":{"enabled":false}},"config_patch_state":"unresolved"}`,
+		statusBody: `{"snapshot_generation":3,"upstream":{"name":"openai","base_url":"https://api.openai.com/v1"},"modules":{"config_patch":{"enabled":false}},"config_patch_state":"unresolved"}`,
 	}
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
 				"cli": {
 					Port:     11199,
-					Provider: "openai",
+					Upstream: "openai",
 					Modules: map[string]config.ModuleConfig{
 						"config_patch": {Enabled: false},
 					},
 				},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -474,20 +474,20 @@ func TestManagerAPIPatchRejectsSecondRunningConfigPatchEnable(t *testing.T) {
 			Workers: map[string]config.WorkerConfig{
 				"codex-app": {
 					Port:     6767,
-					Provider: "openai",
+					Upstream: "openai",
 					Modules: map[string]config.ModuleConfig{
 						"config_patch": {Enabled: true},
 					},
 				},
 				"cli": {
 					Port:     11199,
-					Provider: "openai",
+					Upstream: "openai",
 					Modules: map[string]config.ModuleConfig{
 						"config_patch": {Enabled: false},
 					},
 				},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -515,14 +515,14 @@ func TestManagerAPICreatesAndStartsWorker(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
 		Starter: starter,
 	})
 
-	body := strings.NewReader(`{"name":"cli-openai","port":11199,"provider":"openai","modules":{"api_translate":{"enabled":true}}}`)
+	body := strings.NewReader(`{"name":"cli-openai","port":11199,"upstream":"openai","modules":{"api_translate":{"enabled":true}}}`)
 	res := httptest.NewRecorder()
 	m.ServeHTTP(res, httptest.NewRequest(http.MethodPost, "http://manager.local/api/workers", body))
 	if res.Code != http.StatusCreated {
@@ -546,16 +546,16 @@ func TestManagerAPICreateWorkerRejectsManagedPortConflict(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"app": {Port: 6767, Provider: "openai"},
+				"app": {Port: 6767, Upstream: "openai"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
 		Starter: fakeStarter{},
 	})
 
-	body := strings.NewReader(`{"name":"duplicate","port":6767,"provider":"openai"}`)
+	body := strings.NewReader(`{"name":"duplicate","port":6767,"upstream":"openai"}`)
 	res := httptest.NewRecorder()
 	m.ServeHTTP(res, httptest.NewRequest(http.MethodPost, "http://manager.local/api/workers", body))
 	if res.Code != http.StatusConflict {
@@ -574,13 +574,13 @@ func TestManagerAPIUpdatesWorkerPortByRespawning(t *testing.T) {
 			Workers: map[string]config.WorkerConfig{
 				"cli-openai": {
 					Port:     11199,
-					Provider: "openai",
+					Upstream: "openai",
 					Modules: map[string]config.ModuleConfig{
 						"api_translate": {Enabled: true},
 					},
 				},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -591,7 +591,7 @@ func TestManagerAPIUpdatesWorkerPortByRespawning(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	body := strings.NewReader(`{"port":11200,"provider":"openai","modules":{"api_translate":{"enabled":true}}}`)
+	body := strings.NewReader(`{"port":11200,"upstream":"openai","modules":{"api_translate":{"enabled":true}}}`)
 	res := httptest.NewRecorder()
 	m.ServeHTTP(res, httptest.NewRequest(http.MethodPatch, "http://manager.local/api/workers/11199", body))
 	if res.Code != http.StatusOK {
@@ -626,17 +626,17 @@ func TestManagerAPIWorkerPortUpdateRejectsConflict(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"app": {Port: 6767, Provider: "openai"},
-				"cli": {Port: 11199, Provider: "openai"},
+				"app": {Port: 6767, Upstream: "openai"},
+				"cli": {Port: 11199, Upstream: "openai"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
 		Starter: fakeStarter{},
 	})
 
-	body := strings.NewReader(`{"port":6767,"provider":"openai"}`)
+	body := strings.NewReader(`{"port":6767,"upstream":"openai"}`)
 	res := httptest.NewRecorder()
 	m.ServeHTTP(res, httptest.NewRequest(http.MethodPatch, "http://manager.local/api/workers/11199", body))
 	if res.Code != http.StatusConflict {
@@ -651,9 +651,9 @@ func TestManagerWorkerLifecycleStateTransitions(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"codex-app": {Port: 6767, Provider: "openai"},
+				"codex-app": {Port: 6767, Upstream: "openai"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -685,9 +685,9 @@ func TestManagerReportsForcedStopState(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"codex-app": {Port: 6767, Provider: "openai"},
+				"codex-app": {Port: 6767, Upstream: "openai"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -709,10 +709,10 @@ func TestManagerStartConfiguredWorkers(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"app": {Port: 6767, Provider: "openai"},
-				"cli": {Port: 11199, Provider: "openai"},
+				"app": {Port: 6767, Upstream: "openai"},
+				"cli": {Port: 11199, Upstream: "openai"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -761,13 +761,13 @@ func TestManagerStartConfiguredWorkersRecoversStaleConfigPatchBeforeSpawn(t *tes
 			Workers: map[string]config.WorkerConfig{
 				"app": {
 					Port:     6767,
-					Provider: "openai",
+					Upstream: "openai",
 					Modules: map[string]config.ModuleConfig{
 						"config_patch": {Enabled: true, Params: map[string]any{"config_path": configPath, "state_dir": filepath.Join(dir, "state")}},
 					},
 				},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -831,13 +831,13 @@ func TestManagerStartConfiguredWorkersLeavesManualEditConflictUnresolvedBeforeSp
 			Workers: map[string]config.WorkerConfig{
 				"app": {
 					Port:     6767,
-					Provider: "openai",
+					Upstream: "openai",
 					Modules: map[string]config.ModuleConfig{
 						"config_patch": {Enabled: true, Params: map[string]any{"config_path": configPath, "state_dir": filepath.Join(dir, "state")}},
 					},
 				},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -897,7 +897,7 @@ func TestManagerStartConfiguredWorkersReportsFailure(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"bad": {Port: 6767, Provider: "missing"},
+				"bad": {Port: 6767, Upstream: "missing"},
 			},
 		},
 		Starter: fakeStarter{},
@@ -916,9 +916,9 @@ func TestManagerConfigAndProviderPersistenceAPI(t *testing.T) {
 		ConfigPath: configPath,
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"app": {Port: 6767, Provider: "openai"},
+				"app": {Port: 6767, Upstream: "openai"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1", APIKey: "sk-file"},
 			},
 		},
@@ -928,7 +928,7 @@ func TestManagerConfigAndProviderPersistenceAPI(t *testing.T) {
 	m.statuses["app"] = "running"
 
 	res := httptest.NewRecorder()
-	m.ServeHTTP(res, httptest.NewRequest(http.MethodPatch, "http://manager.local/api/providers/openai", strings.NewReader(`{"base_url":"https://relay.example/v1","api_key":"sk-file","api_format":"chat_completions"}`)))
+	m.ServeHTTP(res, httptest.NewRequest(http.MethodPatch, "http://manager.local/api/upstreams/openai", strings.NewReader(`{"base_url":"https://relay.example/v1","api_key":"sk-file","api_format":"chat_completions"}`)))
 	if res.Code != http.StatusOK {
 		t.Fatalf("unexpected provider update status %d: %s", res.Code, res.Body.String())
 	}
@@ -962,9 +962,9 @@ func TestManagerProviderUpdateFailsBeforePersistingWhenLiveWorkerRejects(t *test
 		ConfigPath: configPath,
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"app": {Port: 6767, Provider: "openai"},
+				"app": {Port: 6767, Upstream: "openai"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1", APIKey: "sk-file"},
 			},
 		},
@@ -974,14 +974,14 @@ func TestManagerProviderUpdateFailsBeforePersistingWhenLiveWorkerRejects(t *test
 	m.statuses["app"] = "running"
 
 	res := httptest.NewRecorder()
-	m.ServeHTTP(res, httptest.NewRequest(http.MethodPatch, "http://manager.local/api/providers/openai", strings.NewReader(`{"base_url":"https://bad.example/v1","api_key":"sk-file","api_format":"chat_completions"}`)))
+	m.ServeHTTP(res, httptest.NewRequest(http.MethodPatch, "http://manager.local/api/upstreams/openai", strings.NewReader(`{"base_url":"https://bad.example/v1","api_key":"sk-file","api_format":"chat_completions"}`)))
 	if res.Code != http.StatusBadGateway {
 		t.Fatalf("expected live worker failure, got %d: %s", res.Code, res.Body.String())
 	}
 
 	cfg := m.store.Config()
-	if cfg.Providers["openai"].BaseURL != "https://api.openai.com/v1" {
-		t.Fatalf("provider update persisted after live worker failure: %#v", cfg.Providers["openai"])
+	if cfg.Upstreams["openai"].BaseURL != "https://api.openai.com/v1" {
+		t.Fatalf("provider update persisted after live worker failure: %#v", cfg.Upstreams["openai"])
 	}
 }
 
@@ -993,9 +993,9 @@ func TestManagerConfigUpdatesPersistAsynchronously(t *testing.T) {
 		ConfigPath: configPath,
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"app": {Port: 6767, Provider: "openai"},
+				"app": {Port: 6767, Upstream: "openai"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1", APIKey: "sk-file"},
 			},
 		},
@@ -1003,14 +1003,14 @@ func TestManagerConfigUpdatesPersistAsynchronously(t *testing.T) {
 	defer m.Close()
 
 	res := httptest.NewRecorder()
-	m.ServeHTTP(res, httptest.NewRequest(http.MethodPatch, "http://manager.local/api/providers/openai", strings.NewReader(`{"base_url":"https://async.example/v1","api_key":"sk-file","api_format":"chat_completions"}`)))
+	m.ServeHTTP(res, httptest.NewRequest(http.MethodPatch, "http://manager.local/api/upstreams/openai", strings.NewReader(`{"base_url":"https://async.example/v1","api_key":"sk-file","api_format":"chat_completions"}`)))
 	if res.Code != http.StatusOK {
 		t.Fatalf("unexpected provider update status %d: %s", res.Code, res.Body.String())
 	}
 
 	eventually(t, time.Second, func() bool {
 		loaded, err := config.LoadFile(configPath)
-		return err == nil && loaded.Providers["openai"].BaseURL == "https://async.example/v1"
+		return err == nil && loaded.Upstreams["openai"].BaseURL == "https://async.example/v1"
 	})
 
 	eventually(t, time.Second, func() bool {
@@ -1024,9 +1024,9 @@ func TestManagerHealthMonitorMarksFailedAfterRetryLimit(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"app": {Port: 6767, Provider: "openai"},
+				"app": {Port: 6767, Upstream: "openai"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -1046,9 +1046,9 @@ func TestManagerHealthFailureRestartsWorker(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"app": {Port: 6767, Provider: "openai"},
+				"app": {Port: 6767, Upstream: "openai"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -1077,9 +1077,9 @@ func TestManagerHealthFailureStopsRestartingAfterRetryLimit(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"app": {Port: 6767, Provider: "openai"},
+				"app": {Port: 6767, Upstream: "openai"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -1105,9 +1105,9 @@ func TestManagerManualRestartResetsHealthRetryCounter(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"app": {Port: 6767, Provider: "openai"},
+				"app": {Port: 6767, Upstream: "openai"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -1138,9 +1138,9 @@ func TestManagerHealthMonitorDoesNotResetRetryCounterBeforeHealthyWindow(t *test
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"app": {Port: 6767, Provider: "openai"},
+				"app": {Port: 6767, Upstream: "openai"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -1169,9 +1169,9 @@ func TestManagerHealthMonitorResetsRetryCounterAfterHealthyWindow(t *testing.T) 
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"app": {Port: 6767, Provider: "openai"},
+				"app": {Port: 6767, Upstream: "openai"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -1201,9 +1201,9 @@ func TestManagerHealthMonitorLoopRecordsCheckerResults(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"app": {Port: 6767, Provider: "openai"},
+				"app": {Port: 6767, Upstream: "openai"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -1226,9 +1226,9 @@ func TestManagerWorkerLogsAreRedactedAndExposed(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"app": {Port: 6767, Provider: "openai"},
+				"app": {Port: 6767, Upstream: "openai"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -1251,10 +1251,10 @@ func TestManagerLogSinkHonorsWorkerLogLevel(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"app": {Port: 6767, Provider: "openai", LogLevel: "simple"},
-				"cli": {Port: 11199, Provider: "openai", LogLevel: "detail"},
+				"app": {Port: 6767, Upstream: "openai", LogLevel: "simple"},
+				"cli": {Port: 11199, Upstream: "openai", LogLevel: "detail"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -1338,7 +1338,7 @@ type recordingWorkerClient struct {
 	patchedModule    string
 	patchedConfig    config.ModuleConfig
 	switchedPort     int
-	switchedProvider provider.RuntimeProvider
+	switchedProvider upstream.RuntimeUpstream
 	switchErr        error
 	statusBody       string
 }
@@ -1356,7 +1356,7 @@ func (c *recordingWorkerClient) PatchModule(port int, moduleName string, cfg con
 	return nil
 }
 
-func (c *recordingWorkerClient) SwitchProvider(port int, runtime provider.RuntimeProvider) error {
+func (c *recordingWorkerClient) SwitchUpstream(port int, runtime upstream.RuntimeUpstream) error {
 	c.switchedPort = port
 	c.switchedProvider = runtime
 	return c.switchErr

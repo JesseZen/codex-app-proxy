@@ -15,9 +15,9 @@ func TestWorkerStreamEndpointReplaysExistingLines(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"app": {Port: 6767, Provider: "openai", LogLevel: "detail"},
+				"app": {Port: 6767, Upstream: "openai", LogLevel: "detail"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -54,9 +54,9 @@ func TestWorkerStreamEndpointStreamsLiveSubscribedLines(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"app": {Port: 6767, Provider: "openai", LogLevel: "detail"},
+				"app": {Port: 6767, Upstream: "openai", LogLevel: "detail"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -92,9 +92,9 @@ func TestWorkerStreamEndpointStopsWhenSinkCloses(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"app": {Port: 6767, Provider: "openai", LogLevel: "detail"},
+				"app": {Port: 6767, Upstream: "openai", LogLevel: "detail"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},

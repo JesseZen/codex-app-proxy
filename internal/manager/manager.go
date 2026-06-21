@@ -15,7 +15,7 @@ import (
 	"github.com/jesse/codex-app-proxy/internal/constants"
 	"github.com/jesse/codex-app-proxy/internal/logging"
 	"github.com/jesse/codex-app-proxy/internal/module"
-	"github.com/jesse/codex-app-proxy/internal/provider"
+	"github.com/jesse/codex-app-proxy/internal/upstream"
 )
 
 type Config struct {
@@ -57,7 +57,7 @@ type WorkerSummary struct {
 	Name               string                         `json:"name"`
 	Port               int                            `json:"port"`
 	Role               string                         `json:"role"`
-	Provider           provider.RedactedProvider      `json:"provider"`
+	Upstream           upstream.RedactedUpstream      `json:"upstream"`
 	Status             string                         `json:"status"`
 	SnapshotGeneration int                            `json:"snapshot_generation"`
 	LogLevel           string                         `json:"log_level"`
@@ -83,13 +83,13 @@ type HealthChecker interface {
 type WorkerClient interface {
 	ToggleModule(port int, moduleName string) error
 	PatchModule(port int, moduleName string, cfg config.ModuleConfig) error
-	SwitchProvider(port int, runtime provider.RuntimeProvider) error
+	SwitchUpstream(port int, runtime upstream.RuntimeUpstream) error
 	GetStatus(port int) (WorkerStatus, error)
 }
 
 type WorkerStatus struct {
 	SnapshotGeneration int                            `json:"snapshot_generation"`
-	Provider           provider.RedactedProvider      `json:"provider"`
+	Upstream           upstream.RedactedUpstream      `json:"upstream"`
 	Modules            map[string]config.ModuleConfig `json:"modules"`
 	ConfigPatchState   string                         `json:"config_patch_state,omitempty"`
 	ConfigPatchDetail  map[string]string              `json:"config_patch_detail,omitempty"`
@@ -99,7 +99,7 @@ type WorkerDetail struct {
 	Name               string                         `json:"name"`
 	Port               int                            `json:"port"`
 	Role               string                         `json:"role"`
-	Provider           provider.RedactedProvider      `json:"provider"`
+	Upstream           upstream.RedactedUpstream      `json:"upstream"`
 	Status             string                         `json:"status"`
 	SnapshotGeneration int                            `json:"snapshot_generation"`
 	LogLevel           string                         `json:"log_level"`
@@ -193,7 +193,7 @@ func (m *Manager) workerSummaries() []WorkerSummary {
 	type summarySeed struct {
 		name          string
 		worker        config.WorkerConfig
-		profile       config.ProviderProfile
+		profile       config.UpstreamProfile
 		providerFound bool
 		status        string
 		generation    int
@@ -209,7 +209,7 @@ func (m *Manager) workerSummaries() []WorkerSummary {
 	seeds := make([]summarySeed, 0, len(names))
 	for _, name := range names {
 		worker := m.config.Workers[name]
-		profile, ok := m.config.Providers[worker.Provider]
+		profile, ok := m.config.Upstreams[worker.Upstream]
 		seeds = append(seeds, summarySeed{
 			name:          name,
 			worker:        cloneWorkerConfig(worker),
@@ -223,15 +223,15 @@ func (m *Manager) workerSummaries() []WorkerSummary {
 
 	out := make([]WorkerSummary, 0, len(seeds))
 	for _, seed := range seeds {
-		runtimeProvider := provider.RuntimeProvider{Name: seed.worker.Provider}
+		runtimeUpstream := upstream.RuntimeUpstream{Name: seed.worker.Upstream}
 		if seed.providerFound {
-			runtimeProvider, _ = provider.Resolve(seed.worker.Provider, seed.profile)
+			runtimeUpstream, _ = upstream.Resolve(seed.worker.Upstream, seed.profile)
 		}
 		out = append(out, WorkerSummary{
 			Name:               seed.name,
 			Port:               seed.worker.Port,
 			Role:               seed.worker.Role,
-			Provider:           runtimeProvider.Redacted(),
+			Upstream:           runtimeUpstream.Redacted(),
 			Status:             seed.status,
 			SnapshotGeneration: seed.generation,
 			LogLevel:           workerLogLevel(seed.worker),
@@ -242,16 +242,16 @@ func (m *Manager) workerSummaries() []WorkerSummary {
 }
 
 func (m *Manager) workerDetail(name string, worker config.WorkerConfig) WorkerDetail {
-	runtimeProvider := provider.RuntimeProvider{Name: worker.Provider}
-	if profile, ok := m.providerProfileSnapshot()[worker.Provider]; ok {
-		runtimeProvider, _ = provider.Resolve(worker.Provider, profile)
+	runtimeUpstream := upstream.RuntimeUpstream{Name: worker.Upstream}
+	if profile, ok := m.upstreamProfileSnapshot()[worker.Upstream]; ok {
+		runtimeUpstream, _ = upstream.Resolve(worker.Upstream, profile)
 	}
 
 	detail := WorkerDetail{
 		Name:               name,
 		Port:               worker.Port,
 		Role:               worker.Role,
-		Provider:           runtimeProvider.Redacted(),
+		Upstream:           runtimeUpstream.Redacted(),
 		Status:             string(m.workerStatus(name)),
 		SnapshotGeneration: m.workerGeneration(name),
 		LogLevel:           workerLogLevel(worker),
@@ -275,8 +275,8 @@ func (m *Manager) workerDetail(name string, worker config.WorkerConfig) WorkerDe
 	if status.SnapshotGeneration > 0 {
 		detail.SnapshotGeneration = status.SnapshotGeneration
 	}
-	if status.Provider.Name != "" {
-		detail.Provider = status.Provider
+	if status.Upstream.Name != "" {
+		detail.Upstream = status.Upstream
 	}
 	if status.Modules != nil {
 		detail.Modules = workerModulesWithBuiltIns(status.Modules)
@@ -293,14 +293,14 @@ func workerLogLevel(worker config.WorkerConfig) string {
 	return worker.LogLevel
 }
 
-func (m *Manager) resolveProvider(name string) (provider.RuntimeProvider, error) {
+func (m *Manager) resolveUpstream(name string) (upstream.RuntimeUpstream, error) {
 	m.mu.RLock()
-	profile, ok := m.config.Providers[name]
+	profile, ok := m.config.Upstreams[name]
 	m.mu.RUnlock()
 	if !ok {
-		return provider.RuntimeProvider{Name: name}, fmt.Errorf("provider %q not found", name)
+		return upstream.RuntimeUpstream{Name: name}, fmt.Errorf("upstream %q not found", name)
 	}
-	return provider.Resolve(name, profile)
+	return upstream.Resolve(name, profile)
 }
 
 func (m *Manager) workerByPort(port int) (string, config.WorkerConfig, bool) {
@@ -620,7 +620,7 @@ func (m *Manager) publishWorkerUpdated(name string, worker config.WorkerConfig) 
 		"worker":    name,
 		"port":      worker.Port,
 		"role":      worker.Role,
-		"provider":  worker.Provider,
+		"upstream":  worker.Upstream,
 		"log_level": workerLogLevel(worker),
 		"modules":   cloneModules(worker.Modules),
 	})
@@ -860,12 +860,12 @@ func (m *Manager) workerConfigSnapshot() map[string]config.WorkerConfig {
 	return workers
 }
 
-func (m *Manager) providerProfileSnapshot() map[string]config.ProviderProfile {
+func (m *Manager) upstreamProfileSnapshot() map[string]config.UpstreamProfile {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	providers := make(map[string]config.ProviderProfile, len(m.config.Providers))
-	for name, profile := range m.config.Providers {
+	providers := make(map[string]config.UpstreamProfile, len(m.config.Upstreams))
+	for name, profile := range m.config.Upstreams {
 		providers[name] = profile
 	}
 	return providers
@@ -892,13 +892,13 @@ type liveWorkerTarget struct {
 	port int
 }
 
-func (m *Manager) liveWorkersUsingProvider(providerName string) []liveWorkerTarget {
+func (m *Manager) liveWorkersUsingUpstream(upstreamName string) []liveWorkerTarget {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	targets := []liveWorkerTarget{}
 	for workerName, worker := range m.config.Workers {
-		if worker.Provider != providerName || m.workerStatusLocked(workerName) != WorkerStateRunning {
+		if worker.Upstream != upstreamName || m.workerStatusLocked(workerName) != WorkerStateRunning {
 			continue
 		}
 		targets = append(targets, liveWorkerTarget{port: worker.Port})
@@ -910,13 +910,13 @@ func cloneConfig(cfg config.Config) config.Config {
 	out := config.Config{
 		Defaults:  cfg.Defaults,
 		Workers:   make(map[string]config.WorkerConfig, len(cfg.Workers)),
-		Providers: make(map[string]config.ProviderProfile, len(cfg.Providers)),
+		Upstreams: make(map[string]config.UpstreamProfile, len(cfg.Upstreams)),
 	}
 	for name, worker := range cfg.Workers {
 		out.Workers[name] = cloneWorkerConfig(worker)
 	}
-	for name, profile := range cfg.Providers {
-		out.Providers[name] = profile
+	for name, profile := range cfg.Upstreams {
+		out.Upstreams[name] = profile
 	}
 	return out
 }
@@ -925,7 +925,7 @@ func cloneWorkerConfig(worker config.WorkerConfig) config.WorkerConfig {
 	return config.WorkerConfig{
 		Role:     worker.Role,
 		Port:     worker.Port,
-		Provider: worker.Provider,
+		Upstream: worker.Upstream,
 		LogLevel: workerLogLevel(worker),
 		Modules:  cloneModules(worker.Modules),
 	}

@@ -74,16 +74,16 @@ func (e Event) AsWorkerHealthChanged() (worker string, status string, errMsg str
 }
 
 // AsWorkerUpdated 解析 worker.updated 事件。ok=false 表示类型不匹配。
-func (e Event) AsWorkerUpdated() (worker string, port int, provider string, logLevel string, modules map[string]bool, ok bool) {
+func (e Event) AsWorkerUpdated() (worker string, port int, upstream string, logLevel string, modules map[string]bool, ok bool) {
 	if e.Type != EventWorkerUpdated {
 		return "", 0, "", "", nil, false
 	}
 	worker, _ = e.Payload["worker"].(string)
 	port = payloadInt(e.Payload["port"])
-	provider, _ = e.Payload["provider"].(string)
+	upstream, _ = e.Payload["upstream"].(string)
 	logLevel, _ = e.Payload["log_level"].(string)
 	modules = payloadBoolMap(e.Payload["modules"])
-	return worker, port, provider, logLevel, modules, true
+	return worker, port, upstream, logLevel, modules, true
 }
 
 // AsModuleUpdated 解析 module.updated 事件。ok=false 表示类型不匹配。
@@ -99,13 +99,13 @@ func (e Event) AsModuleUpdated() (worker string, port int, module string, enable
 	return worker, port, module, enabled, params, true
 }
 
-// AsProviderUpdated 解析 provider.updated 事件。ok=false 表示类型不匹配。
-func (e Event) AsProviderUpdated() (provider string, ok bool) {
-	if e.Type != EventProviderUpdated {
+// AsUpstreamUpdated 解析 upstream.updated 事件。ok=false 表示类型不匹配。
+func (e Event) AsUpstreamUpdated() (upstream string, ok bool) {
+	if e.Type != EventUpstreamUpdated {
 		return "", false
 	}
-	provider, _ = e.Payload["provider"].(string)
-	return provider, true
+	upstream, _ = e.Payload["upstream"].(string)
+	return upstream, true
 }
 
 // AsConfigStatusChanged 解析 config.status.changed 事件。ok=false 表示类型不匹配。

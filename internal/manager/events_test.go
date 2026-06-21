@@ -141,9 +141,9 @@ func TestManagerPublishesWorkerLifecycleEvents(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"app": {Port: 6767, Provider: "openai"},
+				"app": {Port: 6767, Upstream: "openai"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -177,13 +177,13 @@ func TestManagerPublishesWorkerUpdateEvents(t *testing.T) {
 			Workers: map[string]config.WorkerConfig{
 				"app": {
 					Port:     6767,
-					Provider: "openai",
+					Upstream: "openai",
 					Modules: map[string]config.ModuleConfig{
 						"api_translate": {Enabled: true, Params: map[string]any{"api_format": "responses"}},
 					},
 				},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -221,9 +221,9 @@ func TestManagerDoesNotPublishWorkerUpdatedForRolledBackPortChange(t *testing.T)
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"app": {Port: 6767, Provider: "openai"},
+				"app": {Port: 6767, Upstream: "openai"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -271,9 +271,9 @@ func TestManagerPublishesModuleUpdatedAfterGenerationBump(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"app": {Port: 6767, Provider: "openai", Modules: map[string]config.ModuleConfig{"api_translate": {Enabled: false}}},
+				"app": {Port: 6767, Upstream: "openai", Modules: map[string]config.ModuleConfig{"api_translate": {Enabled: false}}},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -313,9 +313,9 @@ func TestManagerPublishesProviderUpdatedAfterGenerationBump(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
 			Workers: map[string]config.WorkerConfig{
-				"app": {Port: 6767, Provider: "openai"},
+				"app": {Port: 6767, Upstream: "openai"},
 			},
-			Providers: map[string]config.ProviderProfile{
+			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
 			},
 		},
@@ -332,17 +332,17 @@ func TestManagerPublishesProviderUpdatedAfterGenerationBump(t *testing.T) {
 
 	body := strings.NewReader(`{"base_url":"https://relay.example/v1","api_format":"chat_completions"}`)
 	res := httptest.NewRecorder()
-	m.ServeHTTP(res, httptest.NewRequest(http.MethodPatch, "http://manager.local/api/providers/openai", body))
+	m.ServeHTTP(res, httptest.NewRequest(http.MethodPatch, "http://manager.local/api/upstreams/openai", body))
 	if res.Code != http.StatusOK {
 		t.Fatalf("unexpected provider update status %d: %s", res.Code, res.Body.String())
 	}
 
-	event := nextEventOfType(t, sub, "provider.updated")
+	event := nextEventOfType(t, sub, "upstream.updated")
 	if m.workerGeneration("app") <= startGeneration {
 		t.Fatalf("expected generation to be bumped before event, start=%d current=%d", startGeneration, m.workerGeneration("app"))
 	}
-	if event.Payload["provider"] != "openai" {
-		t.Fatalf("bad provider event: %#v", event)
+	if event.Payload["upstream"] != "openai" {
+		t.Fatalf("bad upstream event: %#v", event)
 	}
 }
 
