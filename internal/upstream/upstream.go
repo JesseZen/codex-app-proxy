@@ -1,10 +1,12 @@
 package upstream
 
 import (
+	"fmt"
 	"os"
 	"strings"
 
 	"github.com/jesse/codex-app-proxy/internal/config"
+	appruntime "github.com/jesse/codex-app-proxy/internal/runtime"
 )
 
 type RuntimeUpstream struct {
@@ -31,6 +33,27 @@ func Resolve(name string, profile config.UpstreamProfile) (RuntimeUpstream, erro
 		BaseURL:   profile.BaseURL,
 		APIKey:    strings.TrimSpace(profile.APIKey),
 		APIFormat: profile.APIFormat,
+	}, nil
+}
+
+func ResolveRuntime(name string, profile config.UpstreamProfile) (appruntime.UpstreamRuntime, error) {
+	name = strings.TrimSpace(name)
+	if strings.TrimSpace(profile.BaseURL) == "" {
+		return appruntime.UpstreamRuntime{ID: appruntime.UpstreamID(name)}, fmt.Errorf("upstream base URL is required")
+	}
+	if apiKey := runtimeAPIKey(name, profile); apiKey != "" {
+		return appruntime.UpstreamRuntime{
+			ID:        appruntime.UpstreamID(name),
+			BaseURL:   strings.TrimSpace(profile.BaseURL),
+			APIKey:    apiKey,
+			APIFormat: appruntime.APIFormat(strings.TrimSpace(profile.APIFormat)),
+		}, nil
+	}
+	return appruntime.UpstreamRuntime{
+		ID:        appruntime.UpstreamID(name),
+		BaseURL:   strings.TrimSpace(profile.BaseURL),
+		APIKey:    strings.TrimSpace(profile.APIKey),
+		APIFormat: appruntime.APIFormat(strings.TrimSpace(profile.APIFormat)),
 	}, nil
 }
 
