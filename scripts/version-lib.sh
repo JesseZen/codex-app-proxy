@@ -79,12 +79,21 @@ version_next() {
   NEXT_VER=$(version_full "$NEXT_BASE" "$NEXT_PRE" "$NEXT_NUM")
 }
 
+# ── Cross-platform sed in-place ─────────────────────────────────────
+# macOS BSD sed 要求 -i 带后缀参数（空后缀用 ''），Linux GNU sed 的 -i 不接受参数。
+# 用数组封装差异，调用方写 sed "${SED_INPLACE[@]}" 's/.../.../' file。
+if [[ "$(uname)" == "Darwin" ]]; then
+  SED_INPLACE=(-i '')
+else
+  SED_INPLACE=(-i)
+fi
+
 # ── Update Go cmd/version.go ────────────────────────────────────────
 version_update_go() {
   local ver="$1"
   local gofile="$ROOT_DIR/cmd/version.go"
   if [[ -f "$gofile" ]]; then
-    sed -i 's/^var version = ".*"/var version = "'"$ver"'"/' "$gofile"
+    sed "${SED_INPLACE[@]}" 's/^var version = ".*"/var version = "'"$ver"'"/' "$gofile"
   fi
 }
 
@@ -92,7 +101,7 @@ version_update_go() {
 _version_update_pkg() {
   local pkg="$1" ver="$2"
   if grep -q '"version"' "$pkg"; then
-    sed -i 's/"version": ".*"/"version": "'"$ver"'"/' "$pkg"
+    sed "${SED_INPLACE[@]}" 's/"version": ".*"/"version": "'"$ver"'"/' "$pkg"
   else
     BUMP_PKG="$pkg" BUMP_VER="$ver" python3 -c '
 import os, json
@@ -113,7 +122,7 @@ version_update_ts() {
   local ver="$1"
   local root_pkg="$ROOT_DIR/package.json"
   if [[ -f "$root_pkg" ]] && grep -q '"version"' "$root_pkg"; then
-    sed -i 's/"version": ".*"/"version": "'"$ver"'"/' "$root_pkg"
+    sed "${SED_INPLACE[@]}" 's/"version": ".*"/"version": "'"$ver"'"/' "$root_pkg"
   fi
   for pkg in "$ROOT_DIR"/packages/*/package.json "$ROOT_DIR"/tui/package.json; do
     if [[ -f "$pkg" ]]; then
