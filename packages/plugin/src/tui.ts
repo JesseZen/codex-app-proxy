@@ -127,6 +127,7 @@ export type TuiDialogProps = {
 
 export type TuiDialogStack = {
   replace: (render: () => JSX.Element, onClose?: () => void) => void
+  push: (render: () => JSX.Element, onClose?: () => void) => void
   clear: () => void
   setSize: (size: "medium" | "large" | "xlarge") => void
   readonly size: "medium" | "large" | "xlarge"

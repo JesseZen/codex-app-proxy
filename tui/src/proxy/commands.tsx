@@ -16,6 +16,7 @@ type WorkerClient = {
 type DialogLike = {
   clear(): void
   replace(input: any, onClose?: () => void): void
+  push(input: any, onClose?: () => void): void
 }
 
 type ToastLike = {
@@ -71,7 +72,7 @@ export function registerProxyCommands(api: TuiPluginApi) {
                 const initialLines = await (api.client as unknown as { getLogs(port: number): Promise<string[]> }).getLogs(
                   worker.port,
                 )
-                api.ui.dialog.replace(() => <DialogLogs worker={worker} initialLines={initialLines} />)
+                api.ui.dialog.push(() => <DialogLogs worker={worker} initialLines={initialLines} />)
               }}
             />
           ))

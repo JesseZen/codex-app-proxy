@@ -1,5 +1,6 @@
 import { ScrollBoxRenderable, TextAttributes } from "@opentui/core"
 import { useSDK } from "../context/sdk"
+import { EscHint, useDialog } from "../ui/dialog"
 import { useTheme } from "../context/theme"
 import { useTerminalDimensions } from "@opentui/solid"
 import { createSignal, onMount, onCleanup, For, Show } from "solid-js"
@@ -7,6 +8,7 @@ import type { WorkerSummary } from "../context/sdk"
 
 export function DialogLogs(props: { worker: WorkerSummary; initialLines?: string[] }) {
   const sdk = useSDK()
+  const dialog = useDialog()
   const { theme } = useTheme()
   const dimensions = useTerminalDimensions()
   const [lines, setLines] = createSignal<string[]>(props.initialLines ?? [])
@@ -14,6 +16,7 @@ export function DialogLogs(props: { worker: WorkerSummary; initialLines?: string
   const [connected, setConnected] = createSignal(false)
 
   onMount(async () => {
+    dialog.setSize("large")
     try {
       if (!props.initialLines) {
         const existing = await sdk.client.getLogs(props.worker.port)
@@ -60,18 +63,15 @@ export function DialogLogs(props: { worker: WorkerSummary; initialLines?: string
   const height = () => Math.min(dimensions().height - 8, 30)
 
   return (
-    <box
-      width={Math.min(88, dimensions().width - 4)}
-      backgroundColor={theme.backgroundPanel}
-      paddingTop={1}
-      paddingBottom={1}
-      flexDirection="column"
-    >
-      <box paddingLeft={2} paddingBottom={1}>
-        <text fg={theme.text} attributes={TextAttributes.BOLD}>
-          Logs: {props.worker.name} (:{props.worker.port})
-        </text>
-        <text fg={theme.textMuted}> {connected() ? "● live" : "○ disconnected"}</text>
+    <box paddingBottom={1} flexDirection="column" gap={1}>
+      <box paddingLeft={2} flexDirection="row" justifyContent="space-between">
+        <box flexDirection="row" gap={1}>
+          <text fg={theme.text} attributes={TextAttributes.BOLD}>
+            Logs: {props.worker.name} (:{props.worker.port})
+          </text>
+          <text fg={theme.textMuted}>{connected() ? "● live" : "○ disconnected"}</text>
+        </box>
+        <EscHint dialog={dialog} />
       </box>
       <scrollbox height={height()} paddingLeft={1} paddingRight={1}>
         <For each={lines()}>
