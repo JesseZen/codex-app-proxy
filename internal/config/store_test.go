@@ -22,7 +22,7 @@ workers:
 providers:
   openai:
     base_url: https://api.openai.com/v1
-    api_key_ref: ${OPENAI_API_KEY}
+    api_key: plain-key
 `), 0600)
 	if err != nil {
 		t.Fatal(err)
@@ -36,8 +36,8 @@ providers:
 	if cfg.Defaults.LogDir == "" {
 		t.Fatal("expected default log_dir")
 	}
-	if cfg.Providers["openai"].APIKeyRef != "${OPENAI_API_KEY}" {
-		t.Fatalf("secret ref changed: %#v", cfg.Providers["openai"])
+	if cfg.Providers["openai"].APIKey != "plain-key" {
+		t.Fatalf("expected plain api key to load, got %#v", cfg.Providers["openai"])
 	}
 	if !cfg.Workers["codex-app"].Modules["image_filter"].Enabled {
 		t.Fatal("expected module enabled")
@@ -82,7 +82,7 @@ func TestAtomicSaveLeavesValidYAMLAndTracksGeneration(t *testing.T) {
 			"one": {Port: 6767, Provider: "openai"},
 		},
 		Providers: map[string]ProviderProfile{
-			"openai": {BaseURL: "https://api.openai.com/v1", APIKeyRef: "${OPENAI_API_KEY}"},
+			"openai": {BaseURL: "https://api.openai.com/v1", APIKey: "plain-key"},
 		},
 	})
 

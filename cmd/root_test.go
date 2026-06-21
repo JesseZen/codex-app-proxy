@@ -182,7 +182,7 @@ func TestRootProgramFactoryBuildsTypeScriptTUICommand(t *testing.T) {
 }
 
 func TestRootRunnerDoesNotWriteConfiguredWorkerStartupFailureToTerminal(t *testing.T) {
-	startErr := errors.New("cli-groq: secret reference GROQ_API_KEY is missing")
+	startErr := errors.New("cli-groq: missing API key")
 	mgr := &fakeRootManager{startErr: startErr}
 	server := &fakeRootServer{listenStarted: make(chan struct{})}
 	program := &fakeRootProgram{waitForListen: server.listenStarted}

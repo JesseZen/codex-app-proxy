@@ -29,7 +29,7 @@ type ModuleConfig struct {
 
 type ProviderProfile struct {
 	BaseURL   string `yaml:"base_url" json:"base_url"`
-	APIKeyRef string `yaml:"api_key_ref" json:"api_key_ref"`
+	APIKey    string `yaml:"api_key,omitempty" json:"api_key,omitempty"`
 	APIFormat string `yaml:"api_format,omitempty" json:"api_format,omitempty"`
 }
 

@@ -34,19 +34,19 @@ workers:
 providers:
     custom:
         base_url: ""
-        api_key_ref: ""
+        api_key: ""
     groq:
         base_url: https://api.groq.com/openai/v1
-        api_key_ref: ${GROQ_API_KEY}
+        api_key: sk-...
         api_format: chat_completions
     joycode:
         base_url: https://api.joycode.dev/v1
-        api_key_ref: ${JOYCODE_API_KEY}
+        api_key: sk-...
         api_format: chat_completions
     openai:
         base_url: https://api.openai.com/v1
-        api_key_ref: ${OPENAI_API_KEY}
+        api_key: sk-...
     openrouter:
         base_url: https://openrouter.ai/api/v1
-        api_key_ref: ${OPENROUTER_API_KEY}
+        api_key: sk-...
         api_format: chat_completions

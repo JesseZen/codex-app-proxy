@@ -3,6 +3,8 @@ import { createTestRenderer } from "@opentui/core/testing"
 import type { TuiPluginApi } from "@codex-proxy/plugin/tui"
 import { Effect } from "effect"
 import { Global } from "@codex-proxy/core/global"
+import { mkdir } from "node:fs/promises"
+import path from "node:path"
 import { createTuiResolvedConfig } from "./fixture/tui-runtime"
 import { createEventSource, createFetch, directory, json } from "./fixture/tui-sdk"
 import { registerProxyCommands } from "../src/proxy/commands"
@@ -84,7 +86,7 @@ function createProxyHarness() {
   }
   const calls = {
     patchWorker: [] as Array<{ port: number; provider: string }>,
-    putProvider: [] as Array<{ name: string; body: { base_url: string; api_key_ref?: string; api_format?: string } }>,
+    patchProvider: [] as Array<{ name: string; body: { base_url?: string; api_key?: string; api_format?: string } }>,
     saveConfig: 0,
     getLogs: 0,
   }
@@ -165,16 +167,15 @@ function createProxyHarness() {
       return json(workers.get(6767)!)
     }
 
-    if (url.pathname.startsWith("/api/providers/") && method === "PUT") {
+    if (url.pathname.startsWith("/api/providers/") && method === "PATCH") {
       const name = url.pathname.slice("/api/providers/".length)
-      const body = JSON.parse(String(init?.body ?? "null")) as { base_url: string; api_key_ref?: string; api_format?: string }
-      calls.putProvider.push({ name, body })
+      const body = JSON.parse(String(init?.body ?? "null")) as { base_url?: string; api_key?: string; api_format?: string }
+      calls.patchProvider.push({ name, body })
       providers.set(name, {
         name,
-        base_url: body.base_url,
-        api_key_ref: body.api_key_ref,
-        api_format: body.api_format,
-        has_api_key: Boolean(body.api_key_ref),
+        base_url: body.base_url ?? providers.get(name)?.base_url ?? "",
+        api_format: body.api_format ?? providers.get(name)?.api_format,
+        has_api_key: body.api_key !== undefined ? Boolean(body.api_key) : providers.get(name)?.has_api_key ?? false,
       })
       for (const [port, worker] of workers.entries()) {
         if (worker.provider.name !== name) continue
@@ -208,6 +209,9 @@ async function mountProxyApp() {
   const setup = await createTestRenderer({ width: 80, height: 24, useThread: false })
   const core = await import("@opentui/core")
   mock.module("@opentui/core", () => ({ ...core, createCliRenderer: async () => setup.renderer }))
+  const state = path.join("/Users/jesse/.local/state/codex-proxy")
+  await mkdir(state, { recursive: true })
+  await Bun.write(path.join(state, "kv.json"), "{}")
   const events = createEventSource()
   const proxy = createProxyHarness()
   let api!: TuiPluginApi
@@ -274,6 +278,7 @@ test("proxy switch updates worker provider and status detail reflects the change
     expect(app.frame()).toContain("Switch Upstream: app")
 
     app.api.keymap.dispatchCommand("dialog.select.next")
+    await app.render()
     app.api.keymap.dispatchCommand("dialog.select.submit")
     await wait(() => app.calls.patchWorker.length === 1)
     await app.render()
@@ -360,7 +365,7 @@ test("proxy upstream registers an upstream command", async () => {
   }
 })
 
-test("proxy upstream selection opens edit flow and saves provider", async () => {
+test("proxy upstream selection opens field list and saves provider", async () => {
   const app = await mountProxyApp()
 
   try {
@@ -369,35 +374,25 @@ test("proxy upstream selection opens edit flow and saves provider", async () => 
     expect(app.frame()).toContain("Manage Upstreams")
 
     app.api.keymap.dispatchCommand("dialog.select.next")
+    await app.render()
     app.api.keymap.dispatchCommand("dialog.select.submit")
     await wait(async () => {
       await app.render()
-      return app.frame().includes("Base URL: openai")
+      return app.frame().includes("Edit Upstream: openai")
     })
 
-    app.api.keymap.dispatchCommand("dialog.prompt.submit")
+    app.api.keymap.dispatchCommand("dialog.select.submit")
     await wait(async () => {
       await app.render()
-      return app.frame().includes("API Key Ref: openai")
+      return app.frame().includes("Base URL: https://api.openai.com/v1")
     })
-
     app.api.keymap.dispatchCommand("dialog.prompt.submit")
-    await wait(async () => {
-      await app.render()
-      return app.frame().includes("API Format: openai")
-    })
+    await wait(() => app.calls.patchProvider.length === 1)
 
-    app.api.keymap.dispatchCommand("dialog.prompt.submit")
-    await wait(() => app.calls.putProvider.length === 1)
-
-    expect(app.calls.putProvider).toEqual([
+    expect(app.calls.patchProvider).toEqual([
       {
         name: "openai",
-        body: {
-          base_url: "https://api.openai.com/v1",
-          api_format: undefined,
-          api_key_ref: undefined,
-        },
+        body: { base_url: "https://api.openai.com/v1" },
       },
     ])
   } finally {
@@ -423,34 +418,22 @@ test("proxy upstream creates a new upstream", async () => {
     app.api.keymap.dispatchCommand("dialog.prompt.submit")
     await wait(async () => {
       await app.render()
-      return app.frame().includes("Base URL: groq")
+      return app.frame().includes("Edit Upstream: groq")
     })
 
+    app.api.keymap.dispatchCommand("dialog.select.submit")
+    await wait(async () => {
+      await app.render()
+      return app.frame().includes("Base URL: upstream")
+    })
     await app.mockInput.typeText("https://api.groq.com/openai/v1")
     app.api.keymap.dispatchCommand("dialog.prompt.submit")
-    await wait(async () => {
-      await app.render()
-      return app.frame().includes("API Key Ref: groq")
-    })
+    await wait(() => app.calls.patchProvider.length === 1)
 
-    await app.mockInput.typeText("${GROQ_API_KEY}")
-    app.api.keymap.dispatchCommand("dialog.prompt.submit")
-    await wait(async () => {
-      await app.render()
-      return app.frame().includes("API Format: groq")
-    })
-
-    app.api.keymap.dispatchCommand("dialog.prompt.submit")
-    await wait(() => app.calls.putProvider.length === 1)
-
-    expect(app.calls.putProvider).toEqual([
+    expect(app.calls.patchProvider).toEqual([
       {
         name: "groq",
-        body: {
-          base_url: "https://api.groq.com/openai/v1",
-          api_format: "chat_completions",
-          api_key_ref: "${GROQ_API_KEY}",
-        },
+        body: { base_url: "https://api.groq.com/openai/v1" },
       },
     ])
   } finally {

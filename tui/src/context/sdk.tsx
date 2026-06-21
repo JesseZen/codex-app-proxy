@@ -100,9 +100,9 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
             Object.values(result.providers ?? {}),
           )
         },
-        async putProvider(name: string, profile: { base_url: string; api_key_ref?: string; api_format?: string }) {
+        async patchProvider(name: string, profile: { base_url?: string; api_key?: string; api_format?: string }) {
           return request(`/api/providers/${name}`, {
-            method: "PUT",
+            method: "PATCH",
             headers: { "content-type": "application/json" },
             body: JSON.stringify(profile),
           })

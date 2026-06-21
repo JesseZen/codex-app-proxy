@@ -1,7 +1,6 @@
 package provider
 
 import (
-	"fmt"
 	"os"
 	"strings"
 
@@ -24,14 +23,13 @@ type RedactedProvider struct {
 }
 
 func Resolve(name string, profile config.ProviderProfile) (RuntimeProvider, error) {
-	apiKey, err := resolveSecretRef(profile.APIKeyRef)
-	if err != nil {
-		return RuntimeProvider{}, err
+	if apiKey := runtimeAPIKey(name, profile); apiKey != "" {
+		return RuntimeProvider{Name: name, BaseURL: profile.BaseURL, APIKey: apiKey, APIFormat: profile.APIFormat}, nil
 	}
 	return RuntimeProvider{
 		Name:      name,
 		BaseURL:   profile.BaseURL,
-		APIKey:    apiKey,
+		APIKey:    strings.TrimSpace(profile.APIKey),
 		APIFormat: profile.APIFormat,
 	}, nil
 }
@@ -45,21 +43,10 @@ func (p RuntimeProvider) Redacted() RedactedProvider {
 	}
 }
 
-func resolveSecretRef(ref string) (string, error) {
-	ref = strings.TrimSpace(ref)
-	if ref == "" {
-		return "", nil
+func runtimeAPIKey(providerName string, profile config.ProviderProfile) string {
+	name := strings.ToUpper(strings.TrimSpace(providerName))
+	if name == "" {
+		return ""
 	}
-	if strings.HasPrefix(ref, "${") && strings.HasSuffix(ref, "}") {
-		name := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(ref, "${"), "}"))
-		if name == "" {
-			return "", fmt.Errorf("empty secret reference")
-		}
-		value := os.Getenv(name)
-		if value == "" {
-			return "", fmt.Errorf("secret reference %s is missing", name)
-		}
-		return value, nil
-	}
-	return "", fmt.Errorf("unsupported secret reference %q", ref)
+	return strings.TrimSpace(os.Getenv(name + "_API_KEY"))
 }

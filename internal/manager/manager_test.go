@@ -57,7 +57,7 @@ func TestManagerAPIListsWorkersAndProvidersWithoutSecrets(t *testing.T) {
 				"codex-app": {Role: "app", Port: 6767, Provider: "openai"},
 			},
 			Providers: map[string]config.ProviderProfile{
-				"openai": {BaseURL: "https://api.openai.com/v1", APIKeyRef: "${OPENAI_API_KEY}"},
+				"openai": {BaseURL: "https://api.openai.com/v1", APIKey: "sk-file"},
 			},
 		},
 	})
@@ -72,6 +72,9 @@ func TestManagerAPIListsWorkersAndProvidersWithoutSecrets(t *testing.T) {
 	}
 	if !strings.Contains(res.Body.String(), `"has_api_key":true`) {
 		t.Fatalf("workers API did not expose key state: %s", res.Body.String())
+	}
+	if strings.Contains(res.Body.String(), "api_key_ref") {
+		t.Fatalf("workers API leaked legacy key ref field: %s", res.Body.String())
 	}
 	if !strings.Contains(res.Body.String(), `"snapshot_generation":1`) {
 		t.Fatalf("workers API did not expose snapshot generation: %s", res.Body.String())
@@ -125,7 +128,7 @@ func TestManagerBuildsWorkerRuntimeConfigForFDWithoutSecretInArgs(t *testing.T) 
 				"codex-app": {Role: "app", Port: 6767, Provider: "openai"},
 			},
 			Providers: map[string]config.ProviderProfile{
-				"openai": {BaseURL: "https://api.openai.com/v1", APIKeyRef: "${OPENAI_API_KEY}"},
+				"openai": {BaseURL: "https://api.openai.com/v1", APIKey: "sk-file"},
 			},
 		},
 	})
@@ -149,7 +152,8 @@ func TestManagerBuildsWorkerRuntimeConfigForFDWithoutSecretInArgs(t *testing.T) 
 	}
 }
 
-func TestManagerStartWorkerFailsBeforeSpawnWhenRequiredSecretMissing(t *testing.T) {
+func TestManagerStartWorkerUsesProviderSecretWhenConfigured(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "sk-env")
 	starter := &recordingStarter{}
 	m := New(Config{
 		Config: config.Config{
@@ -157,23 +161,21 @@ func TestManagerStartWorkerFailsBeforeSpawnWhenRequiredSecretMissing(t *testing.
 				"codex-app": {Role: "app", Port: 6767, Provider: "openai"},
 			},
 			Providers: map[string]config.ProviderProfile{
-				"openai": {BaseURL: "https://api.openai.com/v1", APIKeyRef: "${MISSING_API_KEY}"},
+				"openai": {BaseURL: "https://api.openai.com/v1", APIKey: "sk-file"},
 			},
 		},
 		Starter: starter,
 	})
 
-	err := m.StartWorker("codex-app")
-	if err == nil {
-		t.Fatal("expected missing required secret to fail worker startup")
+	if err := m.StartWorker("codex-app"); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(err.Error(), "secret reference MISSING_API_KEY is missing") {
-		t.Fatalf("unexpected startup error: %v", err)
+	if len(starter.spawns) != 1 {
+		t.Fatalf("expected one worker spawn, got %d", len(starter.spawns))
 	}
-	if len(starter.spawns) != 0 {
-		t.Fatalf("worker should fail before spawn when secret is missing, got %d spawns", len(starter.spawns))
+	if !strings.Contains(string(starter.spawns[0].RuntimeJSON), "sk-env") {
+		t.Fatalf("expected env secret in runtime payload, got %s", starter.spawns[0].RuntimeJSON)
 	}
-	assertWorkerStatus(t, m, "failed")
 }
 
 func TestManagerWorkerSummariesExposeRole(t *testing.T) {
@@ -280,7 +282,7 @@ func TestManagerAPIWorkerDetailIncludesProviderFieldsAndConfigPatchState(t *test
 				},
 			},
 			Providers: map[string]config.ProviderProfile{
-				"openai": {BaseURL: "https://api.openai.com/v1", APIKeyRef: "${OPENAI_API_KEY}", APIFormat: "chat_completions"},
+				"openai": {BaseURL: "https://api.openai.com/v1", APIKey: "sk-file", APIFormat: "chat_completions"},
 			},
 		},
 		WorkerClient: &recordingWorkerClient{
@@ -917,7 +919,7 @@ func TestManagerConfigAndProviderPersistenceAPI(t *testing.T) {
 				"app": {Port: 6767, Provider: "openai"},
 			},
 			Providers: map[string]config.ProviderProfile{
-				"openai": {BaseURL: "https://api.openai.com/v1", APIKeyRef: "${OPENAI_API_KEY}"},
+				"openai": {BaseURL: "https://api.openai.com/v1", APIKey: "sk-file"},
 			},
 		},
 		WorkerClient: client,
@@ -926,7 +928,7 @@ func TestManagerConfigAndProviderPersistenceAPI(t *testing.T) {
 	m.statuses["app"] = "running"
 
 	res := httptest.NewRecorder()
-	m.ServeHTTP(res, httptest.NewRequest(http.MethodPut, "http://manager.local/api/providers/openai", strings.NewReader(`{"base_url":"https://relay.example/v1","api_key_ref":"${OPENAI_API_KEY}","api_format":"chat_completions"}`)))
+	m.ServeHTTP(res, httptest.NewRequest(http.MethodPatch, "http://manager.local/api/providers/openai", strings.NewReader(`{"base_url":"https://relay.example/v1","api_key":"sk-file","api_format":"chat_completions"}`)))
 	if res.Code != http.StatusOK {
 		t.Fatalf("unexpected provider update status %d: %s", res.Code, res.Body.String())
 	}
@@ -943,7 +945,7 @@ func TestManagerConfigAndProviderPersistenceAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "https://relay.example/v1") || strings.Contains(string(data), "sk-") {
+	if !strings.Contains(string(data), "https://relay.example/v1") || !strings.Contains(string(data), "api_key: sk-file") || strings.Contains(string(data), "api_key_ref") {
 		t.Fatalf("bad persisted config:\n%s", data)
 	}
 	if client.switchedPort != 6767 || client.switchedProvider.Name != "openai" || client.switchedProvider.BaseURL != "https://relay.example/v1" || client.switchedProvider.APIFormat != "chat_completions" {
@@ -963,7 +965,7 @@ func TestManagerProviderUpdateFailsBeforePersistingWhenLiveWorkerRejects(t *test
 				"app": {Port: 6767, Provider: "openai"},
 			},
 			Providers: map[string]config.ProviderProfile{
-				"openai": {BaseURL: "https://api.openai.com/v1", APIKeyRef: "${OPENAI_API_KEY}"},
+				"openai": {BaseURL: "https://api.openai.com/v1", APIKey: "sk-file"},
 			},
 		},
 		WorkerClient: client,
@@ -972,7 +974,7 @@ func TestManagerProviderUpdateFailsBeforePersistingWhenLiveWorkerRejects(t *test
 	m.statuses["app"] = "running"
 
 	res := httptest.NewRecorder()
-	m.ServeHTTP(res, httptest.NewRequest(http.MethodPut, "http://manager.local/api/providers/openai", strings.NewReader(`{"base_url":"https://bad.example/v1","api_key_ref":"${OPENAI_API_KEY}","api_format":"chat_completions"}`)))
+	m.ServeHTTP(res, httptest.NewRequest(http.MethodPatch, "http://manager.local/api/providers/openai", strings.NewReader(`{"base_url":"https://bad.example/v1","api_key":"sk-file","api_format":"chat_completions"}`)))
 	if res.Code != http.StatusBadGateway {
 		t.Fatalf("expected live worker failure, got %d: %s", res.Code, res.Body.String())
 	}
@@ -994,14 +996,14 @@ func TestManagerConfigUpdatesPersistAsynchronously(t *testing.T) {
 				"app": {Port: 6767, Provider: "openai"},
 			},
 			Providers: map[string]config.ProviderProfile{
-				"openai": {BaseURL: "https://api.openai.com/v1", APIKeyRef: "${OPENAI_API_KEY}"},
+				"openai": {BaseURL: "https://api.openai.com/v1", APIKey: "sk-file"},
 			},
 		},
 	})
 	defer m.Close()
 
 	res := httptest.NewRecorder()
-	m.ServeHTTP(res, httptest.NewRequest(http.MethodPut, "http://manager.local/api/providers/openai", strings.NewReader(`{"base_url":"https://async.example/v1","api_key_ref":"${OPENAI_API_KEY}","api_format":"chat_completions"}`)))
+	m.ServeHTTP(res, httptest.NewRequest(http.MethodPatch, "http://manager.local/api/providers/openai", strings.NewReader(`{"base_url":"https://async.example/v1","api_key":"sk-file","api_format":"chat_completions"}`)))
 	if res.Code != http.StatusOK {
 		t.Fatalf("unexpected provider update status %d: %s", res.Code, res.Body.String())
 	}

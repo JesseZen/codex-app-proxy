@@ -332,7 +332,7 @@ func TestManagerPublishesProviderUpdatedAfterGenerationBump(t *testing.T) {
 
 	body := strings.NewReader(`{"base_url":"https://relay.example/v1","api_format":"chat_completions"}`)
 	res := httptest.NewRecorder()
-	m.ServeHTTP(res, httptest.NewRequest(http.MethodPut, "http://manager.local/api/providers/openai", body))
+	m.ServeHTTP(res, httptest.NewRequest(http.MethodPatch, "http://manager.local/api/providers/openai", body))
 	if res.Code != http.StatusOK {
 		t.Fatalf("unexpected provider update status %d: %s", res.Code, res.Body.String())
 	}

@@ -1,26 +1,43 @@
-import { createMemo } from "solid-js"
-import { DialogSelect, type DialogSelectOption } from "../ui/dialog-select"
-import { useSync } from "../context/sync"
-import { useSDK } from "../context/sdk"
-import { useDialog } from "../ui/dialog"
-import { useToast } from "../ui/toast"
+import { createMemo, createSignal } from "solid-js"
+import { DialogConfirm } from "../ui/dialog-confirm"
 import { DialogPrompt } from "../ui/dialog-prompt"
+import { DialogSelect, type DialogSelectOption } from "../ui/dialog-select"
+import { useDialog } from "../ui/dialog"
+import { useSDK } from "../context/sdk"
+import { useSync } from "../context/sync"
+import { useToast } from "../ui/toast"
 
 type UpstreamOption = { type: "create" } | { type: "edit"; name: string }
+type FieldKey = "base_url" | "api_key" | "api_format"
+
+type Draft = {
+  base_url: string
+  api_key: string
+  api_format: string
+  has_api_key: boolean
+}
+
+type Field = {
+  key: FieldKey
+  title: string
+  placeholder: string
+  defaultValue?: string
+  hidden?: boolean
+}
+
+const FIELDS: Field[] = [
+  { key: "base_url", title: "Base URL", placeholder: "https://example.com/v1" },
+  { key: "api_key", title: "API Key", placeholder: "sk-...", hidden: true },
+  { key: "api_format", title: "API Format", placeholder: "responses or chat_completions", defaultValue: "chat_completions" },
+]
 
 export function DialogUpstream() {
   const sync = useSync()
-  const sdk = useSDK()
   const dialog = useDialog()
   const toast = useToast()
 
   const options = createMemo<DialogSelectOption<UpstreamOption>[]>(() => [
-    {
-      title: "Create New Upstream",
-      value: { type: "create" },
-      description: "Add a relay endpoint",
-      category: "Actions",
-    },
+    { title: "Create New Upstream", value: { type: "create" }, description: "Add a relay endpoint", category: "Actions" },
     ...sync.data.providers.map((upstream) => ({
       title: upstream.name,
       value: { type: "edit" as const, name: upstream.name },
@@ -29,27 +46,6 @@ export function DialogUpstream() {
     })),
   ])
 
-  async function saveUpstream(input: {
-    name: string
-    baseURL: string
-    apiKeyRef?: string
-    apiFormat?: string
-    mode: "created" | "saved"
-  }) {
-    try {
-      await sdk.client.putProvider(input.name, {
-        base_url: input.baseURL,
-        api_key_ref: input.apiKeyRef?.trim() || undefined,
-        api_format: input.apiFormat?.trim() || undefined,
-      })
-      await sync.bootstrap({ fatal: false })
-      toast.show({ message: `${input.mode === "created" ? "Created" : "Saved"} upstream ${input.name}`, variant: "success" })
-    } catch (err) {
-      toast.error(err)
-    }
-    dialog.clear()
-  }
-
   return (
     <DialogSelect
       title="Manage Upstreams"
@@ -57,9 +53,7 @@ export function DialogUpstream() {
       placeholder="Search upstreams..."
       onSelect={async (opt) => {
         if (opt.value.type === "create") {
-          const name = await DialogPrompt.show(dialog, "New Upstream Name", {
-            placeholder: "e.g. groq",
-          })
+          const name = await DialogPrompt.show(dialog, "New Upstream Name", { placeholder: "e.g. groq" })
           if (name === null) return
           const upstreamName = name.trim()
           if (!upstreamName || upstreamName.includes("/")) {
@@ -67,62 +61,87 @@ export function DialogUpstream() {
             dialog.clear()
             return
           }
-
-          const baseURL = await DialogPrompt.show(dialog, `Base URL: ${upstreamName}`, {
-            placeholder: "https://example.com/v1",
-          })
-          if (baseURL === null) return
-
-          const apiKeyRef = await DialogPrompt.show(dialog, `API Key Ref: ${upstreamName}`, {
-            placeholder: "${OPENAI_API_KEY}",
-          })
-          if (apiKeyRef === null) return
-
-          const apiFormat = await DialogPrompt.show(dialog, `API Format: ${upstreamName}`, {
-            value: "chat_completions",
-            placeholder: "responses or chat_completions",
-          })
-          if (apiFormat === null) return
-
-          await saveUpstream({
-            name: upstreamName,
-            baseURL,
-            apiKeyRef,
-            apiFormat,
-            mode: "created",
-          })
+          dialog.replace(() => <DialogUpstreamEditor name={upstreamName} draft={{ base_url: "", api_key: "", api_format: "chat_completions", has_api_key: false }} mode="created" />)
           return
         }
 
         const upstream = sync.data.providers.find((item) => item.name === opt.value.name)
         if (!upstream) return
-
-        const baseURL = await DialogPrompt.show(dialog, `Base URL: ${upstream.name}`, {
-          value: upstream.base_url,
-          placeholder: "https://example.com/v1",
-        })
-        if (baseURL === null) return
-
-        const apiKeyRef = await DialogPrompt.show(dialog, `API Key Ref: ${upstream.name}`, {
-          value: upstream.api_key_ref ?? "",
-          placeholder: "${OPENAI_API_KEY}",
-        })
-        if (apiKeyRef === null) return
-
-        const apiFormat = await DialogPrompt.show(dialog, `API Format: ${upstream.name}`, {
-          value: upstream.api_format ?? "",
-          placeholder: "responses or chat_completions",
-        })
-        if (apiFormat === null) return
-
-        await saveUpstream({
-          name: upstream.name,
-          baseURL,
-          apiKeyRef,
-          apiFormat,
-          mode: "saved",
-        })
+        dialog.replace(() => (
+          <DialogUpstreamEditor
+            name={upstream.name}
+            draft={{
+              base_url: upstream.base_url,
+              api_key: "",
+              api_format: upstream.api_format ?? "",
+              has_api_key: upstream.has_api_key,
+            }}
+            mode="saved"
+          />
+        ))
       }}
     />
   )
+}
+
+function DialogUpstreamEditor(props: { name: string; draft: Draft; mode: "created" | "saved" }) {
+  const sync = useSync()
+  const sdk = useSDK()
+  const dialog = useDialog()
+  const toast = useToast()
+  const [draft, setDraft] = createSignal(props.draft)
+
+  const options = createMemo<DialogSelectOption<FieldKey>[]>(() =>
+    FIELDS.map((field) => ({
+      title: field.title,
+      value: field.key,
+      description: describe(field, draft()),
+      category: "Fields",
+      onSelect: async () => {
+        const patch = await editField(dialog, field, draft())
+        if (!patch) return
+        const updated = { ...draft(), ...patch, has_api_key: patch.api_key === undefined ? draft().has_api_key : patch.api_key !== "" }
+        setDraft(updated)
+        await sdk.client.patchProvider(props.name, patch)
+        await sync.bootstrap({ fatal: false })
+        toast.show({ message: `${props.mode === "created" ? "Created" : "Saved"} upstream ${props.name}`, variant: "success" })
+      },
+    })),
+  )
+
+  return <DialogSelect title={`Edit Upstream: ${props.name}`} options={options()} placeholder="Select a field..." />
+}
+
+function describe(field: Field, draft: Draft) {
+  if (field.hidden) return draft.has_api_key ? "******" : "none"
+  return draft[field.key] || field.defaultValue || "—"
+}
+
+async function editField(dialog: ReturnType<typeof useDialog>, field: Field, draft: Draft) {
+  if (field.hidden) {
+    let dirty = false
+    let value = draft.api_key
+    const result = await DialogPrompt.show(dialog, `${field.title}: ${draft.base_url || "upstream"}`, {
+      value: draft.has_api_key ? "******" : "",
+      placeholder: field.placeholder,
+      onInputChange(next) {
+        value = next
+        dirty = true
+      },
+    })
+    if (result === null) {
+      if (!dirty) return
+      const save = await DialogConfirm.show(dialog, "Save API Key", "Save the edited API key?")
+      if (save !== true) return
+    }
+    if (!dirty) return
+    return { api_key: value === "******" ? "" : value }
+  }
+
+  const result = await DialogPrompt.show(dialog, `${field.title}: ${draft.base_url || "upstream"}`, {
+    value: draft[field.key] || field.defaultValue || "",
+    placeholder: field.placeholder,
+  })
+  if (result === null) return
+  return { [field.key]: result } as Partial<Draft>
 }

@@ -4,7 +4,6 @@ import type { EventSource } from "../context/sdk"
 export type RedactedProvider = {
   name: string
   base_url: string
-  api_key_ref?: string
   has_api_key: boolean
   api_format?: string
 }
@@ -120,7 +119,7 @@ export function toCodexProxyProviders(providers: RedactedProvider[]): Provider[]
       name: provider.name,
       source: "config",
       env: [],
-      key: provider.api_key_ref,
+      key: "",
       options: {
         base_url: provider.base_url,
         api_format: provider.api_format,

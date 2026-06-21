@@ -61,7 +61,7 @@ go build -o codex-proxy .
 ```bash
 cp config.example.yaml config.yaml
 # 编辑 config.yaml 配置 workers 和 providers
-# API 密钥通过环境变量引用：api_key_ref: ${OPENAI_API_KEY}
+# API 密钥可直接写入 config.yaml，也可通过环境变量 OPENAI_API_KEY 覆盖
 ```
 
 ```bash
@@ -144,17 +144,17 @@ workers:
 providers:
   joycode:
     base_url: https://api.joycode.dev/v1
-    api_key_ref: ${JOYCODE_API_KEY}   # Reference environment variable
+    api_key: sk-...                    # Plain key in config is supported
     api_format: chat_completions       # Requires Chat Completions translation
 
   openrouter:
     base_url: https://openrouter.ai/api/v1
-    api_key_ref: ${OPENROUTER_API_KEY}
+    api_key: sk-...
     api_format: chat_completions
 
   openai:
     base_url: https://openapi.com/v1
-    api_key_ref: ${OPENAI_API_KEY}     # No api_format = native Responses API passthrough
+    api_key: sk-...                     # OPENAI_API_KEY in env overrides config
 ```
 
 将 `api_format` 留空或不设置 = 原生透传，不进行翻译。

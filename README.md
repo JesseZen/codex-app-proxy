@@ -145,17 +145,19 @@ workers:
 providers:
   joycode:
     base_url: https://api.joycode.dev/v1
-    api_key_ref: ${JOYCODE_API_KEY}   # Reference environment variable
+    api_key: sk-...                   # Plain key in config is supported
     api_format: chat_completions       # Requires Chat Completions translation
 
   openrouter:
     base_url: https://openrouter.ai/api/v1
-    api_key_ref: ${OPENROUTER_API_KEY}
+    api_key: sk-...
     api_format: chat_completions
 
   openai:
     base_url: https://openapi.com/v1
-    api_key_ref: ${OPENAI_API_KEY}     # No api_format = native Responses API passthrough
+    api_key: sk-...                    # Plain key is supported
+    # OPENAI_API_KEY wins over config if exported
+    # No api_format = native Responses API passthrough
 ```
 
 Leaving `api_format` empty or unset = native passthrough, no translation.

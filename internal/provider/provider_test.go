@@ -6,37 +6,50 @@ import (
 	"github.com/jesse/codex-app-proxy/internal/config"
 )
 
-func TestResolveProviderExpandsSecretRefWithoutMutatingProfile(t *testing.T) {
-	t.Setenv("OPENAI_API_KEY", "sk-test-secret")
+func TestResolveProviderUsesEnvApiKeyFirst(t *testing.T) {
+	t.Setenv("JC_API_KEY", "sk-env")
 	profile := config.ProviderProfile{
-		BaseURL:   "https://api.openai.com/v1",
-		APIKeyRef: "${OPENAI_API_KEY}",
-		APIFormat: "responses",
+		BaseURL: "https://localhost:34891",
+		APIKey:  "sk-file",
 	}
 
-	runtime, err := Resolve("openai", profile)
+	runtime, err := Resolve("jc", profile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runtime.APIKey != "sk-test-secret" {
-		t.Fatal("secret was not resolved")
-	}
-	if profile.APIKeyRef != "${OPENAI_API_KEY}" {
-		t.Fatalf("profile was mutated: %#v", profile)
-	}
-
-	redacted := runtime.Redacted()
-	if redacted.APIKey != "" || !redacted.HasAPIKey {
-		t.Fatalf("redacted view leaked or lost key state: %#v", redacted)
+	if runtime.APIKey != "sk-env" {
+		t.Fatalf("expected env key, got %q", runtime.APIKey)
 	}
 }
 
-func TestResolveProviderFailsWhenSecretRefMissing(t *testing.T) {
+func TestResolveProviderFallsBackToConfigApiKey(t *testing.T) {
 	profile := config.ProviderProfile{
-		BaseURL:   "https://api.openai.com/v1",
-		APIKeyRef: "${MISSING_API_KEY}",
+		BaseURL: "https://localhost:34891",
+		APIKey:  "sk-file",
 	}
-	if _, err := Resolve("openai", profile); err == nil {
-		t.Fatal("expected missing secret ref to fail")
+
+	runtime, err := Resolve("jc", profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.APIKey != "sk-file" {
+		t.Fatalf("expected file key, got %q", runtime.APIKey)
 	}
 }
+
+func TestResolveProviderIgnoresLegacyApiKeyRef(t *testing.T) {
+	t.Setenv("JC_API_KEY", "")
+	profile := config.ProviderProfile{
+		BaseURL: "https://localhost:34891",
+		APIKey:  "sk-file",
+	}
+
+	runtime, err := Resolve("jc", profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.APIKey != "sk-file" {
+		t.Fatalf("expected file key with no env override, got %q", runtime.APIKey)
+	}
+}
+

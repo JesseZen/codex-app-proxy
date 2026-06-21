@@ -425,7 +425,6 @@ func (m *Manager) handleProviders(rw http.ResponseWriter, r *http.Request) {
 		out[name] = map[string]any{
 			"name":        name,
 			"base_url":    profile.BaseURL,
-			"api_key_ref": profile.APIKeyRef,
 			"has_api_key": runtime.APIKey != "",
 			"api_format":  profile.APIFormat,
 		}
@@ -434,7 +433,7 @@ func (m *Manager) handleProviders(rw http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Manager) handleProviderByName(rw http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPut {
+	if r.Method != http.MethodPatch {
 		http.NotFound(rw, r)
 		return
 	}
@@ -443,10 +442,26 @@ func (m *Manager) handleProviderByName(rw http.ResponseWriter, r *http.Request) 
 		http.NotFound(rw, r)
 		return
 	}
-	var profile config.ProviderProfile
-	if err := json.NewDecoder(r.Body).Decode(&profile); err != nil {
+	type providerPatch struct {
+		BaseURL   *string `json:"base_url,omitempty"`
+		APIKey    *string `json:"api_key,omitempty"`
+		APIFormat *string `json:"api_format,omitempty"`
+	}
+	var patch providerPatch
+	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 		writeJSON(rw, http.StatusBadRequest, map[string]any{"error": "invalid JSON"})
 		return
+	}
+	current, _ := m.providerProfileSnapshot()[name]
+	profile := current
+	if patch.BaseURL != nil {
+		profile.BaseURL = *patch.BaseURL
+	}
+	if patch.APIKey != nil {
+		profile.APIKey = *patch.APIKey
+	}
+	if patch.APIFormat != nil {
+		profile.APIFormat = *patch.APIFormat
 	}
 	runtime, err := provider.Resolve(name, profile)
 	if err != nil {
@@ -465,7 +480,6 @@ func (m *Manager) handleProviderByName(rw http.ResponseWriter, r *http.Request) 
 	writeJSON(rw, http.StatusOK, map[string]any{
 		"name":        name,
 		"base_url":    profile.BaseURL,
-		"api_key_ref": profile.APIKeyRef,
 		"has_api_key": runtime.APIKey != "",
 		"api_format":  profile.APIFormat,
 	})
