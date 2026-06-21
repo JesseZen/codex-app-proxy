@@ -69,7 +69,8 @@ func (s *WorkerLogSink) SetLevel(level string) {
 func (s *WorkerLogSink) Lines() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := append([]string(nil), s.lines...)
+	out := make([]string, 0, len(s.lines))
+	out = append(out, s.lines...)
 	if s.pending.Len() > 0 {
 		out = append(out, Redact(s.pending.String()))
 	}
