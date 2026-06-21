@@ -31,6 +31,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install co-op-translator
 
+      - name: Check if translation exists
+        id: check
+        run: |
+          if [ -f "translations/zh-CN/README.md" ]; then
+            echo "verb=update" >> "$GITHUB_OUTPUT"
+          else
+            echo "verb=add" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Run Co-op Translator
         env:
           PYTHONIOENCODING: utf-8
@@ -44,8 +53,8 @@ jobs:
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "🌐 Update Chinese translation"
-          title: "🌐 Update Chinese translation"
+          commit-message: "docs(readme): ${{ steps.check.outputs.verb }} Chinese translation"
+          title: "docs(readme): ${{ steps.check.outputs.verb }} Chinese translation"
           body: |
             Auto-translated README.md → translations/zh-CN/README.md
 
