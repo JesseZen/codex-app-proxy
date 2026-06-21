@@ -55,4 +55,4 @@ jobs:
           labels: translation, automated-pr
           delete-branch: true
           add-paths: |
-            translations/
+            translations/zh-CN/README.md
