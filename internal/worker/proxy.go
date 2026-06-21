@@ -15,6 +15,7 @@ import (
 
 	"github.com/jesse/codex-app-proxy/internal/constants"
 	"github.com/jesse/codex-app-proxy/internal/module"
+	appruntime "github.com/jesse/codex-app-proxy/internal/runtime"
 )
 
 type Worker struct {
@@ -24,6 +25,7 @@ type Worker struct {
 
 type Options struct {
 	Snapshot RuntimeConfigSnapshot
+	Runtime  appruntime.WorkerRuntime
 	Client   *http.Client
 }
 
@@ -32,10 +34,27 @@ func New(opts Options) *Worker {
 	if client == nil {
 		client = http.DefaultClient
 	}
+	snapshot := opts.Snapshot
+	if opts.Runtime.Upstream.BaseURL != "" {
+		var err error
+		snapshot, err = snapshotFromRuntime(opts.Runtime)
+		if err != nil {
+			panic(err)
+		}
+	}
 	return &Worker{
-		snapshots: newSnapshotHolder(opts.Snapshot),
+		snapshots: newSnapshotHolder(snapshot),
 		client:    client,
 	}
+}
+
+func (w *Worker) UpdateRuntime(runtime appruntime.WorkerRuntime) (appruntime.Generation, error) {
+	snapshot, err := snapshotFromRuntime(runtime)
+	if err != nil {
+		return 0, err
+	}
+	w.snapshots.Store(snapshot)
+	return appruntime.Generation(snapshot.Generation), nil
 }
 
 func (w *Worker) UpdateSnapshot(snapshot RuntimeConfigSnapshot) error {
