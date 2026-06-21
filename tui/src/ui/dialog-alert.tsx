@@ -58,7 +58,7 @@ export function DialogAlert(props: DialogAlertProps) {
 
 DialogAlert.show = (dialog: DialogContext, title: string, message: string) => {
   return new Promise<void>((resolve) => {
-    dialog.replace(
+    dialog.push(
       () => <DialogAlert title={title} message={message} onConfirm={() => resolve()} />,
       () => resolve(),
     )

@@ -120,7 +120,7 @@ export function DialogPrompt(props: DialogPromptProps) {
 
 DialogPrompt.show = (dialog: DialogContext, title: string, options?: Omit<DialogPromptProps, "title">) => {
   return new Promise<string | null>((resolve) => {
-    dialog.replace(
+    dialog.push(
       () => (
         <DialogPrompt title={title} {...options} onConfirm={(value) => resolve(value)} onCancel={() => resolve(null)} />
       ),

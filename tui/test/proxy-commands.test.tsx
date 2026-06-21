@@ -559,3 +559,52 @@ test("proxy workers editor patches log_level field", async () => {
     await app.cleanup()
   }
 })
+
+test("proxy upstream editor ESC returns to upstream list when stack depth > 1", async () => {
+  const app = await mountProxyApp()
+
+  try {
+    app.api.keymap.dispatchCommand("proxy.upstream")
+    await app.render()
+    expect(app.frame()).toContain("Manage Upstreams")
+
+    app.api.keymap.dispatchCommand("dialog.select.next")
+    await app.render()
+    app.api.keymap.dispatchCommand("dialog.select.submit")
+    await wait(async () => {
+      await app.render()
+      return app.frame().includes("Edit Upstream: openai")
+    })
+    expect(app.frame()).toContain("esc back")
+
+    app.mockInput.pressEscape()
+    await wait(async () => {
+      await app.render()
+      return app.frame().includes("Manage Upstreams") && !app.frame().includes("Edit Upstream: openai")
+    })
+    expect(app.frame()).toContain("Manage Upstreams")
+    expect(app.frame()).not.toContain("Edit Upstream: openai")
+  } finally {
+    await app.cleanup()
+  }
+})
+
+test("proxy upstream editor ESC closes dialog when stack depth is 1", async () => {
+  const app = await mountProxyApp()
+
+  try {
+    app.api.keymap.dispatchCommand("proxy.upstream")
+    await app.render()
+    expect(app.frame()).toContain("Manage Upstreams")
+    expect(app.frame()).not.toContain("esc back")
+
+    app.mockInput.pressEscape()
+    await wait(async () => {
+      await app.render()
+      return !app.frame().includes("Manage Upstreams")
+    })
+    expect(app.frame()).not.toContain("Manage Upstreams")
+  } finally {
+    await app.cleanup()
+  }
+})

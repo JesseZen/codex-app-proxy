@@ -5,6 +5,7 @@ import { DialogSelect, type DialogSelectOption } from "../ui/dialog-select"
 import { useDialog } from "../ui/dialog"
 import { useSDK } from "../context/sdk"
 import { useSync } from "../context/sync"
+import { useTheme } from "../context/theme"
 import { useToast } from "../ui/toast"
 
 type UpstreamOption = { type: "create" } | { type: "edit"; name: string }
@@ -60,13 +61,13 @@ export function DialogUpstream() {
             dialog.clear()
             return
           }
-          dialog.replace(() => <DialogUpstreamEditor name={upstreamName} draft={{ base_url: "", api_key: "", api_format: "chat_completions", has_api_key: false }} mode="created" />)
+          dialog.push(() => <DialogUpstreamEditor name={upstreamName} draft={{ base_url: "", api_key: "", api_format: "chat_completions", has_api_key: false }} mode="created" />)
           return
         }
 
         const upstream = sync.data.upstreams.find((item) => item.name === opt.value.name)
         if (!upstream) return
-        dialog.replace(() => (
+        dialog.push(() => (
           <DialogUpstreamEditor
             name={upstream.name}
             draft={{
@@ -108,7 +109,17 @@ function DialogUpstreamEditor(props: { name: string; draft: Draft; mode: "create
     })),
   )
 
-  return <DialogSelect title={`Edit Upstream: ${props.name}`} options={options()} placeholder="Select a field..." />
+  return <DialogSelect title={`Edit Upstream: ${props.name}`} options={options()} placeholder="Select a field..." footer={<EscHint dialog={dialog} />} />
+}
+
+function EscHint(props: { dialog: ReturnType<typeof useDialog> }) {
+  const { theme } = useTheme()
+  const label = () => (props.dialog.stack.length > 1 ? "back" : "close")
+  return (
+    <text fg={theme.textMuted}>
+      esc <span style={{ fg: theme.text }}>{label()}</span>
+    </text>
+  )
 }
 
 function describe(field: Field, draft: Draft) {

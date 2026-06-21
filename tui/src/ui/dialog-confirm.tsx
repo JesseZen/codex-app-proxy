@@ -92,7 +92,7 @@ export function DialogConfirm(props: DialogConfirmProps) {
 
 DialogConfirm.show = (dialog: DialogContext, title: string, message: string, label?: string) => {
   return new Promise<DialogConfirmResult>((resolve) => {
-    dialog.replace(
+    dialog.push(
       () => (
         <DialogConfirm
           title={title}
