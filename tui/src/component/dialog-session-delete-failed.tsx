@@ -56,9 +56,9 @@ export function DialogSessionDeleteFailed(props: {
         <text attributes={TextAttributes.BOLD} fg={theme.text}>
           Failed to Delete Session
         </text>
-        <text fg={theme.textMuted} onMouseUp={() => dialog.clear()}>
-          esc
-        </text>
+        <box onMouseUp={() => dialog.clear()}>
+          <text fg={theme.textMuted}>esc</text>
+        </box>
       </box>
       <text fg={theme.textMuted} wrapMode="word">
         {`The session "${props.session}" could not be deleted because the workspace "${props.workspace}" is not available.`}

@@ -19,16 +19,15 @@ export function Link(props: LinkProps) {
   const displayText = props.children ?? props.href
 
   return (
-    <text
-      fg={props.fg}
-      bg={props.bg}
+    <box
       width={props.width}
-      wrapMode={props.wrapMode}
       onMouseUp={() => {
         open(props.href).catch(() => {})
       }}
     >
-      {displayText}
-    </text>
+      <text fg={props.fg} bg={props.bg} wrapMode={props.wrapMode}>
+        {displayText}
+      </text>
+    </box>
   )
 }

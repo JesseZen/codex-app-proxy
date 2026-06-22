@@ -37,9 +37,9 @@ export function DialogWorkspaceUnavailable(props: { onRestore?: () => boolean | 
         <text attributes={TextAttributes.BOLD} fg={theme.text}>
           Workspace Unavailable
         </text>
-        <text fg={theme.textMuted} onMouseUp={() => dialog.clear()}>
-          esc
-        </text>
+        <box onMouseUp={() => dialog.clear()}>
+          <text fg={theme.textMuted}>esc</text>
+        </box>
       </box>
       <text fg={theme.textMuted} wrapMode="word">
         This session is attached to a workspace that is no longer available.

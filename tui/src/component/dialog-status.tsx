@@ -46,9 +46,9 @@ export function DialogStatus() {
         <text fg={theme.text} attributes={TextAttributes.BOLD}>
           Status
         </text>
-        <text fg={theme.textMuted} onMouseUp={() => dialog.clear()}>
-          esc
-        </text>
+        <box onMouseUp={() => dialog.clear()}>
+          <text fg={theme.textMuted}>esc</text>
+        </box>
       </box>
       <Show when={Object.keys(sync.data.mcp).length > 0} fallback={<text fg={theme.text}>No MCP Servers</text>}>
         <box>
