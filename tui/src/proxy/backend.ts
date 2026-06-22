@@ -10,6 +10,7 @@ export type RedactedUpstream = {
 
 export type ModuleConfig = {
   enabled: boolean
+  params?: Record<string, unknown>
 }
 
 export type WorkerSummary = {

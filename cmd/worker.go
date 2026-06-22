@@ -17,6 +17,7 @@ import (
 
 	"github.com/jesse/codex-app-proxy/internal/constants"
 	"github.com/jesse/codex-app-proxy/internal/module"
+	appruntime "github.com/jesse/codex-app-proxy/internal/runtime"
 	"github.com/jesse/codex-app-proxy/internal/upstream"
 	"github.com/jesse/codex-app-proxy/internal/worker"
 )
@@ -26,10 +27,14 @@ func runWorker(args []string, stdout io.Writer, stderr io.Writer) int {
 }
 
 type WorkerRuntimeConfig struct {
-	Port     int                            `json:"port"`
-	Role     string                         `json:"role,omitempty"`
-	Upstream upstream.RuntimeUpstream       `json:"upstream"`
-	Modules  map[string]module.ModuleConfig `json:"modules,omitempty"`
+	ID         appruntime.WorkerID            `json:"id,omitempty"`
+	Generation appruntime.Generation          `json:"generation,omitempty"`
+	ListenPort int                            `json:"listen_port,omitempty"`
+	Port       int                            `json:"port,omitempty"`
+	Role       appruntime.WorkerRole          `json:"role,omitempty"`
+	LogLevel   appruntime.LogLevel            `json:"log_level,omitempty"`
+	Upstream   appruntime.UpstreamRuntime     `json:"upstream"`
+	Modules    map[string]module.ModuleConfig `json:"modules,omitempty"`
 }
 
 type workerPatch interface {
@@ -61,11 +66,25 @@ var (
 )
 
 func runWorkerServer(cfg WorkerRuntimeConfig, stdin *os.File) error {
-	modules := buildModules(cfg.Modules, cfg.Upstream.APIFormat)
+	modules := buildModules(cfg.Modules, string(cfg.Upstream.APIFormat))
+	generation := int(cfg.Generation)
+	if generation == 0 {
+		generation = 1
+	}
+	port := cfg.ListenPort
+	if port == 0 {
+		port = cfg.Port
+	}
 	snapshot := worker.RuntimeConfigSnapshot{
-		Generation: 1,
-		Upstream:   cfg.Upstream,
-		Modules:    modules,
+		Generation: generation,
+		Upstream: upstream.RuntimeUpstream{
+			Name:      string(cfg.Upstream.ID),
+			BaseURL:   cfg.Upstream.BaseURL,
+			APIKey:    cfg.Upstream.APIKey,
+			APIFormat: string(cfg.Upstream.APIFormat),
+		},
+		CompiledUpstream: mustCompileUpstream(cfg.Upstream),
+		Modules:          modules,
 	}
 	var patch workerPatch
 	if candidate, enabled := buildWorkerPatch(cfg); enabled {
@@ -77,7 +96,7 @@ func runWorkerServer(cfg WorkerRuntimeConfig, stdin *os.File) error {
 		snapshot.ConfigPatchDetail = patch.Detail()
 	}
 	w := worker.New(worker.Options{Snapshot: snapshot})
-	server := newWorkerServer(constants.LocalhostAddr+":"+strconv.Itoa(cfg.Port), w)
+	server := newWorkerServer(constants.LocalhostAddr+":"+strconv.Itoa(port), w)
 	shutdown := newWorkerShutdown(server, patch, workerShutdownTimeout)
 	server.InstallOrphanWatcher(stdin, shutdown)
 	stopSignals := make(chan os.Signal, 1)
@@ -92,6 +111,14 @@ func runWorkerServer(cfg WorkerRuntimeConfig, stdin *os.File) error {
 		return nil
 	}
 	return err
+}
+
+func mustCompileUpstream(runtime appruntime.UpstreamRuntime) upstream.Compiled {
+	compiled, err := upstream.Compile(runtime)
+	if err != nil {
+		panic(err)
+	}
+	return compiled
 }
 
 func newWorkerShutdown(server workerServer, patch workerPatch, timeout time.Duration) func() {
@@ -156,12 +183,16 @@ func buildConfigPatch(cfg WorkerRuntimeConfig) (*module.ConfigPatch, bool) {
 	if stateDir == "" {
 		stateDir = expandHome("~/.codex-proxy")
 	}
+	port := cfg.ListenPort
+	if port == 0 {
+		port = cfg.Port
+	}
 	return module.NewConfigPatch(module.ConfigPatchOptions{
 		StateDir:    stateDir,
 		ConfigPath:  configPath,
-		WorkerID:    fmt.Sprintf("worker-%d", cfg.Port),
-		WorkerPort:  cfg.Port,
-		PatchedBase: fmt.Sprintf("http://%s:%d", constants.LocalhostAddr, cfg.Port),
+		WorkerID:    string(cfg.ID),
+		WorkerPort:  port,
+		PatchedBase: fmt.Sprintf("http://%s:%d", constants.LocalhostAddr, port),
 	}), true
 }
 
@@ -187,8 +218,14 @@ func runWorkerWithFD(args []string, stdout io.Writer, stderr io.Writer, files ma
 		fmt.Fprintf(stderr, "failed to read runtime config: %v\n", err)
 		return 1
 	}
+	if cfg.ListenPort == 0 {
+		cfg.ListenPort = *port
+	}
 	if cfg.Port == 0 {
-		cfg.Port = *port
+		cfg.Port = cfg.ListenPort
+	}
+	if cfg.ID == "" {
+		cfg.ID = appruntime.WorkerID(fmt.Sprintf("worker-%d", cfg.ListenPort))
 	}
 	if err := workerRunner(cfg); err != nil {
 		fmt.Fprintf(stderr, "failed to start worker: %v\n", err)

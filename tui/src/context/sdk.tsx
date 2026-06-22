@@ -89,6 +89,23 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
             method: "POST",
           })
         },
+        async patchModule(
+          port: number,
+          moduleName: string,
+          cfg: {
+            enabled: boolean
+            params?: Record<string, unknown>
+          },
+        ) {
+          return request<{ worker: string; port: number; module: { name: string; enabled: boolean; params?: Record<string, unknown> } }>(
+            `/api/workers/${port}/modules/${moduleName}`,
+            {
+              method: "PATCH",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(cfg),
+            },
+          )
+        },
         async getLogs(port: number) {
           return request<{ lines: string[] }>(`/api/workers/${port}/logs`).then((result) => result.lines)
         },

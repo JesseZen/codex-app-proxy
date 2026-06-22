@@ -12,6 +12,7 @@ const LockFileName = "cap.lock"
 const (
 	ProxyPathPrefix    = "/_proxy/"
 	ProxyHealthPath    = "/_proxy/health"
+	ProxyRuntimePath   = "/_proxy/runtime"
 	ProxyStatusPath    = "/_proxy/status"
 	ProxySwitchPath    = "/_proxy/switch"
 	ProxyModulesPrefix = "/_proxy/modules/"

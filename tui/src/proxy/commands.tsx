@@ -1,7 +1,7 @@
 import type { TuiPluginApi } from "@codex-proxy/plugin/tui"
 import { DialogConfig } from "./dialog-config"
 import { DialogLogs } from "./dialog-logs"
-import { DialogModules } from "./dialog-modules"
+import { DialogModulePicker } from "./dialog-module"
 import { DialogStatus } from "./dialog-status"
 import { showNewWorkerDialog } from "./dialog-new-worker"
 import { DialogUpstream } from "./dialog-upstream"
@@ -16,6 +16,7 @@ type WorkerClient = {
 type DialogLike = {
   clear(): void
   replace(input: any, onClose?: () => void): void
+  push(input: any, onClose?: () => void): void
 }
 
 type ToastLike = {
@@ -71,7 +72,7 @@ export function registerProxyCommands(api: TuiPluginApi) {
                 const initialLines = await (api.client as unknown as { getLogs(port: number): Promise<string[]> }).getLogs(
                   worker.port,
                 )
-                api.ui.dialog.replace(() => <DialogLogs worker={worker} initialLines={initialLines} />)
+                api.ui.dialog.push(() => <DialogLogs worker={worker} initialLines={initialLines} />)
               }}
             />
           ))
@@ -99,7 +100,7 @@ export function registerProxyCommands(api: TuiPluginApi) {
               title="Worker Modules"
               placeholder="Search workers..."
               onSelect={(worker) => {
-                api.ui.dialog.replace(() => <DialogModules worker={worker} />)
+                api.ui.dialog.push(() => <DialogModulePicker worker={worker} />)
               }}
             />
           ))

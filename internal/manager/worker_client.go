@@ -8,6 +8,7 @@ import (
 
 	"github.com/jesse/codex-app-proxy/internal/config"
 	"github.com/jesse/codex-app-proxy/internal/constants"
+	appruntime "github.com/jesse/codex-app-proxy/internal/runtime"
 	"github.com/jesse/codex-app-proxy/internal/upstream"
 )
 
@@ -52,6 +53,36 @@ func (c HTTPWorkerClient) SwitchUpstream(port int, runtime upstream.RuntimeUpstr
 	}
 	req.Header.Set("Content-Type", "application/json")
 	return c.do(req)
+}
+
+func (c HTTPWorkerClient) ApplyRuntime(port int, workerRuntime appruntime.WorkerRuntime) (ApplyRuntimeStatus, error) {
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(workerRuntime); err != nil {
+		return ApplyRuntimeStatus{}, err
+	}
+	url := fmt.Sprintf("http://%s:%d%s", constants.LocalhostAddr, port, constants.ProxyRuntimePath)
+	req, err := http.NewRequest(http.MethodPut, url, &body)
+	if err != nil {
+		return ApplyRuntimeStatus{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := c.Client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return ApplyRuntimeStatus{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return ApplyRuntimeStatus{}, fmt.Errorf("worker returned %s", resp.Status)
+	}
+	var status ApplyRuntimeStatus
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return ApplyRuntimeStatus{}, err
+	}
+	return status, nil
 }
 
 func (c HTTPWorkerClient) GetStatus(port int) (WorkerStatus, error) {

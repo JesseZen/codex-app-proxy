@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/jesse/codex-app-proxy/internal/module"
-	"github.com/jesse/codex-app-proxy/internal/upstream"
+	appruntime "github.com/jesse/codex-app-proxy/internal/runtime"
 )
 
 func TestRunWorkerReadsRuntimeConfigFromFD(t *testing.T) {
@@ -18,7 +18,7 @@ func TestRunWorkerReadsRuntimeConfigFromFD(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reader.Close()
-	if _, err := writer.Write([]byte(`{"port":6767,"upstream":{"name":"openai","base_url":"https://api.openai.com/v1","api_key":"sk-secret"}}`)); err != nil {
+	if _, err := writer.Write([]byte(`{"id":"codex-app","generation":1,"listen_port":6767,"upstream":{"id":"openai","base_url":"https://api.openai.com/v1","api_key":"sk-secret"}}`)); err != nil {
 		t.Fatal(err)
 	}
 	if err := writer.Close(); err != nil {
@@ -28,7 +28,7 @@ func TestRunWorkerReadsRuntimeConfigFromFD(t *testing.T) {
 	var called bool
 	restore := SetWorkerRunnerForTest(func(cfg WorkerRuntimeConfig) error {
 		called = true
-		if cfg.Port != 6767 || cfg.Upstream.APIKey != "sk-secret" {
+		if cfg.ID != appruntime.WorkerID("codex-app") || cfg.ListenPort != 6767 || cfg.Upstream.APIKey != "sk-secret" {
 			t.Fatalf("bad worker runtime config: %#v", cfg)
 		}
 		return nil
@@ -106,7 +106,7 @@ func TestRunWorkerServerStopsOnOrphanEOF(t *testing.T) {
 	go func() {
 		done <- runWorkerServer(WorkerRuntimeConfig{
 			Port:     0,
-			Upstream: upstream.RuntimeUpstream{BaseURL: "http://127.0.0.1:1"},
+			Upstream: appruntime.UpstreamRuntime{BaseURL: "http://127.0.0.1:1"},
 		}, reader)
 	}()
 

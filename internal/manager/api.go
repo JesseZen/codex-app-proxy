@@ -169,9 +169,11 @@ func (m *Manager) handleWorkerByPort(rw http.ResponseWriter, r *http.Request) {
 			writeJSON(rw, http.StatusBadRequest, map[string]any{"error": redactedErrorMessage(err)})
 			return
 		}
-		if err := m.CheckPortAvailable(workerName, next.Port); err != nil {
-			writeJSON(rw, http.StatusConflict, map[string]any{"error": redactedErrorMessage(err)})
-			return
+		if next.Port != current.Port {
+			if err := m.CheckPortAvailable(workerName, next.Port); err != nil {
+				writeJSON(rw, http.StatusConflict, map[string]any{"error": redactedErrorMessage(err)})
+				return
+			}
 		}
 		if err := m.UpdateWorker(workerName, current, next); err != nil {
 			writeJSON(rw, http.StatusInternalServerError, map[string]any{"error": redactedErrorMessage(err)})
@@ -463,39 +465,55 @@ func (m *Manager) handleUpstreamByName(rw http.ResponseWriter, r *http.Request) 
 	if patch.APIFormat != nil {
 		profile.APIFormat = *patch.APIFormat
 	}
+	m.updateConfig(func(cfgRoot *config.Config) {
+		cfgRoot.Upstreams[name] = profile
+	})
+	m.bumpLiveWorkersUsingUpstream(name)
+	applyErrors := m.applyRuntimeToLiveWorkersUsingUpstream(name)
 	runtime, err := upstream.Resolve(name, profile)
 	if err != nil {
 		writeJSON(rw, http.StatusBadRequest, map[string]any{"error": redactedErrorMessage(err)})
 		return
 	}
-	if err := m.switchLiveWorkersUsingUpstream(name, runtime); err != nil {
-		writeJSON(rw, http.StatusBadGateway, map[string]any{"error": redactedErrorMessage(err)})
-		return
-	}
-	m.updateConfig(func(cfgRoot *config.Config) {
-		cfgRoot.Upstreams[name] = profile
-	})
-	m.bumpLiveWorkersUsingUpstream(name)
 	m.publishEvent(EventUpstreamUpdated, map[string]any{"upstream": name})
-	writeJSON(rw, http.StatusOK, map[string]any{
+	body := map[string]any{
 		"name":        name,
 		"base_url":    profile.BaseURL,
 		"has_api_key": runtime.APIKey != "",
 		"api_format":  profile.APIFormat,
-	})
+	}
+	if len(applyErrors) > 0 {
+		body["apply_errors"] = applyErrors
+	}
+	writeJSON(rw, http.StatusOK, body)
 }
 
-func (m *Manager) switchLiveWorkersUsingUpstream(upstreamName string, runtime upstream.RuntimeUpstream) error {
+func (m *Manager) applyRuntimeToLiveWorkersUsingUpstream(upstreamName string) []string {
 	client := m.workerClient
 	if client == nil {
 		client = HTTPWorkerClient{Client: http.DefaultClient}
 	}
+	failures := []string{}
 	for _, target := range m.liveWorkersUsingUpstream(upstreamName) {
-		if err := client.SwitchUpstream(target.port, runtime); err != nil {
-			return err
+		runtime, err := m.runtimeForWorker(target.name)
+		if err == nil {
+			_, err = client.ApplyRuntime(target.port, runtime)
 		}
+		if err != nil {
+			m.mu.Lock()
+			m.statuses[target.name] = WorkerStateOutOfSync
+			m.mu.Unlock()
+			failures = append(failures, target.name+": "+redactedErrorMessage(err))
+			m.publishEvent(EventWorkerHealthChanged, map[string]any{"worker": target.name, "status": string(WorkerStateOutOfSync), "error": redactedErrorMessage(err)})
+			continue
+		}
+		m.mu.Lock()
+		if m.workerStatusLocked(target.name) != WorkerStateStopped {
+			m.statuses[target.name] = WorkerStateRunning
+		}
+		m.mu.Unlock()
 	}
-	return nil
+	return failures
 }
 
 func (m *Manager) bumpLiveWorkersUsingUpstream(upstreamName string) {
@@ -503,7 +521,9 @@ func (m *Manager) bumpLiveWorkersUsingUpstream(upstreamName string) {
 	defer m.mu.Unlock()
 	for workerName, worker := range m.config.Workers {
 		if worker.Upstream == upstreamName && m.workerStatusLocked(workerName) == WorkerStateRunning {
-			m.generations[workerName] = m.workerGenerationLocked(workerName) + 1
+			next := m.workerGenerationLocked(workerName) + 1
+			m.generations[workerName] = next
+			m.supervisorFor(workerName).setAppliedGeneration(next)
 		}
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/jesse/codex-app-proxy/internal/constants"
 	"github.com/jesse/codex-app-proxy/internal/logging"
 	"github.com/jesse/codex-app-proxy/internal/module"
+	appruntime "github.com/jesse/codex-app-proxy/internal/runtime"
 	"github.com/jesse/codex-app-proxy/internal/upstream"
 )
 
@@ -43,6 +44,8 @@ type Manager struct {
 	store              *config.Store
 	stopConfigWriter   func()
 	events             *eventBus
+	portIndex          map[int]string
+	supervisors        map[string]*WorkerSupervisor
 	processes          map[string]ManagedProcess
 	statuses           map[string]WorkerState
 	retries            map[string]int
@@ -83,8 +86,14 @@ type HealthChecker interface {
 type WorkerClient interface {
 	ToggleModule(port int, moduleName string) error
 	PatchModule(port int, moduleName string, cfg config.ModuleConfig) error
+	ApplyRuntime(port int, runtime appruntime.WorkerRuntime) (ApplyRuntimeStatus, error)
 	SwitchUpstream(port int, runtime upstream.RuntimeUpstream) error
 	GetStatus(port int) (WorkerStatus, error)
+}
+
+type ApplyRuntimeStatus struct {
+	AppliedGeneration  appruntime.Generation `json:"applied_generation"`
+	SnapshotGeneration int                   `json:"snapshot_generation,omitempty"`
 }
 
 type WorkerStatus struct {
@@ -135,6 +144,8 @@ func New(cfg Config) *Manager {
 		healthPoll:         100 * time.Millisecond,
 		store:              store,
 		events:             newEventBus(defaultEventBusCapacity),
+		portIndex:          map[int]string{},
+		supervisors:        map[string]*WorkerSupervisor{},
 		processes:          map[string]ManagedProcess{},
 		statuses:           map[string]WorkerState{},
 		retries:            map[string]int{},
@@ -147,6 +158,7 @@ func New(cfg Config) *Manager {
 	if cfg.ConfigPath != "" {
 		m.stopConfigWriter = store.StartAsyncWriter()
 	}
+	m.portIndex = buildPortIndex(m.config.Workers)
 	if err := syncCodexProfileFiles(cfg.Config); err != nil {
 		m.configStatus.LastSaveError = err.Error()
 	}
@@ -165,6 +177,15 @@ func (m *Manager) CheckPortAvailable(workerName string, port int) error {
 		return fmt.Errorf("port :%d is already in use by another process", port)
 	}
 	return listener.Close()
+}
+
+func (m *Manager) supervisorFor(name string) *WorkerSupervisor {
+	if supervisor := m.supervisors[name]; supervisor != nil {
+		return supervisor
+	}
+	supervisor := newWorkerSupervisor(name)
+	m.supervisors[name] = supervisor
+	return supervisor
 }
 
 func (m *Manager) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
@@ -303,15 +324,27 @@ func (m *Manager) resolveUpstream(name string) (upstream.RuntimeUpstream, error)
 	return upstream.Resolve(name, profile)
 }
 
+func (m *Manager) runtimeForWorker(name string) (appruntime.WorkerRuntime, error) {
+	m.mu.RLock()
+	cfg := cloneConfig(m.config)
+	generation := appruntime.Generation(m.workerGenerationLocked(name))
+	m.mu.RUnlock()
+	return (RuntimeBuilder{}).Build(cfg, name, generation)
+}
+
 func (m *Manager) workerByPort(port int) (string, config.WorkerConfig, bool) {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-	for name, worker := range m.config.Workers {
-		if worker.Port == port {
-			return name, cloneWorkerConfig(worker), true
-		}
+	workerName := m.portIndex[port]
+	if workerName == "" {
+		m.mu.RUnlock()
+		return "", config.WorkerConfig{}, false
 	}
-	return "", config.WorkerConfig{}, false
+	worker, ok := m.config.Workers[workerName]
+	m.mu.RUnlock()
+	if !ok {
+		return "", config.WorkerConfig{}, false
+	}
+	return workerName, cloneWorkerConfig(worker), true
 }
 
 func (m *Manager) updateConfig(fn func(*config.Config)) {
@@ -331,6 +364,7 @@ func (m *Manager) syncConfigFromStore() (config.Config, config.Status) {
 	m.mu.Lock()
 	m.config = cfg
 	m.configStatus = status
+	m.portIndex = buildPortIndex(cfg.Workers)
 	m.mu.Unlock()
 	return cfg, status
 }
@@ -354,18 +388,41 @@ func (m *Manager) publishEvent(eventType EventType, payload map[string]any) {
 
 func (m *Manager) workerStatus(name string) WorkerState {
 	m.mu.RLock()
+	if supervisor := m.supervisors[name]; supervisor != nil {
+		status := supervisor.Status()
+		if status != WorkerStateConfigured {
+			m.mu.RUnlock()
+			return status
+		}
+		if fallback := m.statuses[name]; fallback != "" {
+			m.mu.RUnlock()
+			return fallback
+		}
+		m.mu.RUnlock()
+		return status
+	}
 	defer m.mu.RUnlock()
 	return m.workerStatusLocked(name)
 }
 
 func (m *Manager) configPatchState(name string) string {
 	m.mu.RLock()
+	if supervisor := m.supervisors[name]; supervisor != nil && supervisor.ConfigPatchState() != "" {
+		state := supervisor.ConfigPatchState()
+		m.mu.RUnlock()
+		return state
+	}
 	defer m.mu.RUnlock()
 	return m.configPatchStates[name]
 }
 
 func (m *Manager) configPatchDetail(name string) map[string]string {
 	m.mu.RLock()
+	if supervisor := m.supervisors[name]; supervisor != nil && len(supervisor.ConfigPatchDetail()) > 0 {
+		detail := supervisor.ConfigPatchDetail()
+		m.mu.RUnlock()
+		return detail
+	}
 	defer m.mu.RUnlock()
 	detail := m.configPatchDetails[name]
 	if len(detail) == 0 {
@@ -381,6 +438,7 @@ func (m *Manager) configPatchDetail(name string) map[string]string {
 func (m *Manager) setConfigPatchStatus(name string, state module.ConfigPatchState, detail map[string]string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.supervisorFor(name).setConfigPatchStatus(string(state), detail)
 	if state == "" || state == module.ConfigPatchClean || state == module.ConfigPatchRecovered || state == module.ConfigPatchActive {
 		delete(m.configPatchStates, name)
 		delete(m.configPatchDetails, name)
@@ -400,6 +458,11 @@ func (m *Manager) setConfigPatchStatus(name string, state module.ConfigPatchStat
 
 func (m *Manager) workerGeneration(name string) int {
 	m.mu.RLock()
+	if supervisor := m.supervisors[name]; supervisor != nil && supervisor.AppliedGeneration() > 0 {
+		generation := supervisor.AppliedGeneration()
+		m.mu.RUnlock()
+		return generation
+	}
 	defer m.mu.RUnlock()
 	return m.workerGenerationLocked(name)
 }
@@ -430,7 +493,9 @@ func (m *Manager) setWorkerGenerationLocked(name string, generation int) {
 
 func (m *Manager) bumpWorkerGeneration(name string) {
 	m.mu.Lock()
-	m.generations[name] = m.workerGenerationLocked(name) + 1
+	next := m.workerGenerationLocked(name) + 1
+	m.generations[name] = next
+	m.supervisorFor(name).setAppliedGeneration(next)
 	m.mu.Unlock()
 }
 
@@ -443,11 +508,14 @@ func (m *Manager) startWorker(name string, resetRetries bool) error {
 		m.mu.Lock()
 		m.retries[name] = 0
 		delete(m.healthySince, name)
+		m.supervisorFor(name).setRetryCount(0)
+		m.supervisorFor(name).setHealthySince(time.Time{})
 		m.mu.Unlock()
 	}
 	spawn, err := m.BuildWorkerSpawn(name)
 	if err != nil {
 		m.mu.Lock()
+		m.supervisorFor(name).setStatus(WorkerStateFailed)
 		m.statuses[name] = WorkerStateFailed
 		m.mu.Unlock()
 		m.publishEvent(EventWorkerHealthChanged, map[string]any{"worker": name, "status": string(WorkerStateFailed), "error": redactedErrorMessage(err)})
@@ -456,6 +524,8 @@ func (m *Manager) startWorker(name string, resetRetries bool) error {
 	spawn.LogWriter = m.LogSink(name)
 	if m.starter == nil {
 		m.mu.Lock()
+		m.supervisorFor(name).setStatus(WorkerStateRunning)
+		m.supervisorFor(name).setAppliedGeneration(1)
 		m.statuses[name] = WorkerStateRunning
 		m.setWorkerGenerationLocked(name, 1)
 		m.mu.Unlock()
@@ -465,6 +535,7 @@ func (m *Manager) startWorker(name string, resetRetries bool) error {
 	process, err := m.starter.Start(spawn)
 	if err != nil {
 		m.mu.Lock()
+		m.supervisorFor(name).setStatus(WorkerStateFailed)
 		m.statuses[name] = WorkerStateFailed
 		m.mu.Unlock()
 		m.publishEvent(EventWorkerHealthChanged, map[string]any{"worker": name, "status": string(WorkerStateFailed), "error": redactedErrorMessage(err)})
@@ -472,6 +543,9 @@ func (m *Manager) startWorker(name string, resetRetries bool) error {
 	}
 	m.mu.Lock()
 	m.processes[name] = process
+	m.supervisorFor(name).setProcess(process)
+	m.supervisorFor(name).setStatus(WorkerStateRunning)
+	m.supervisorFor(name).setAppliedGeneration(1)
 	m.statuses[name] = WorkerStateRunning
 	m.setWorkerGenerationLocked(name, 1)
 	m.mu.Unlock()
@@ -520,12 +594,15 @@ func (m *Manager) StopWorker(name string) error {
 	if process != nil {
 		delete(m.processes, name)
 		m.statuses[name] = WorkerStateStopping
+		m.supervisorFor(name).setStatus(WorkerStateStopping)
+		m.supervisorFor(name).clearProcess()
 	}
 	m.mu.Unlock()
 
 	status, err := stopManagedProcess(process)
 	if err != nil {
 		m.mu.Lock()
+		m.supervisorFor(name).setStatus(WorkerStateFailed)
 		m.statuses[name] = WorkerStateFailed
 		m.mu.Unlock()
 		m.publishEvent(EventWorkerHealthChanged, map[string]any{"worker": name, "status": string(WorkerStateFailed), "error": redactedErrorMessage(err)})
@@ -533,6 +610,7 @@ func (m *Manager) StopWorker(name string) error {
 	}
 	m.mu.Lock()
 	m.statuses[name] = status
+	m.supervisorFor(name).setStatus(status)
 	m.mu.Unlock()
 	m.publishEvent(EventWorkerStopped, map[string]any{"worker": name, "status": string(status)})
 	return nil
@@ -574,6 +652,8 @@ func (m *Manager) UpdateWorker(name string, current config.WorkerConfig, next co
 			if oldProcess != nil {
 				m.processes[name] = oldProcess
 				m.statuses[name] = WorkerStateRunning
+				m.supervisorFor(name).setStatus(WorkerStateRunning)
+				m.supervisorFor(name).setProcess(oldProcess)
 			}
 			m.mu.Unlock()
 			return err
@@ -588,9 +668,12 @@ func (m *Manager) UpdateWorker(name string, current config.WorkerConfig, next co
 			if oldProcess != nil {
 				m.processes[name] = oldProcess
 				m.statuses[name] = WorkerStateRunning
+				m.supervisorFor(name).setStatus(WorkerStateRunning)
+				m.supervisorFor(name).setProcess(oldProcess)
 			} else {
 				delete(m.processes, name)
 				m.statuses[name] = WorkerStateFailed
+				m.supervisorFor(name).setStatus(WorkerStateFailed)
 			}
 			m.mu.Unlock()
 			if oldProcess == nil {
@@ -602,12 +685,14 @@ func (m *Manager) UpdateWorker(name string, current config.WorkerConfig, next co
 		if _, err := stopManagedProcess(oldProcess); err != nil {
 			m.mu.Lock()
 			m.statuses[name] = WorkerStateFailed
+			m.supervisorFor(name).setStatus(WorkerStateFailed)
 			m.mu.Unlock()
 			m.publishEvent(EventWorkerHealthChanged, map[string]any{"worker": name, "status": string(WorkerStateFailed), "error": redactedErrorMessage(err)})
 			return err
 		}
 		m.mu.Lock()
 		m.statuses[name] = WorkerStateRunning
+		m.supervisorFor(name).setStatus(WorkerStateRunning)
 		m.mu.Unlock()
 		return nil
 	}
@@ -645,6 +730,11 @@ func (m *Manager) waitForWorkerHealth(port int) error {
 
 func (m *Manager) processForWorker(name string) ManagedProcess {
 	m.mu.RLock()
+	if supervisor := m.supervisors[name]; supervisor != nil {
+		process := supervisor.Process()
+		m.mu.RUnlock()
+		return process
+	}
 	defer m.mu.RUnlock()
 	return m.processes[name]
 }
@@ -681,12 +771,15 @@ func (m *Manager) RecordHealth(name string, healthy bool) {
 		if !ok {
 			since = now
 			m.healthySince[name] = since
+			m.supervisorFor(name).setHealthySince(since)
 		}
 		if now.Sub(since) >= healthyRetryResetWindow {
 			m.retries[name] = 0
+			m.supervisorFor(name).setRetryCount(0)
 		}
 		if m.workerStatusLocked(name) != WorkerStateStopped {
 			m.statuses[name] = WorkerStateRunning
+			m.supervisorFor(name).setStatus(WorkerStateRunning)
 		}
 		m.mu.Unlock()
 		return
@@ -694,23 +787,28 @@ func (m *Manager) RecordHealth(name string, healthy bool) {
 
 	m.mu.Lock()
 	delete(m.healthySince, name)
+	m.supervisorFor(name).setHealthySince(time.Time{})
 	if m.workerStatusLocked(name) == WorkerStateFailed {
 		m.mu.Unlock()
 		return
 	}
 	m.retries[name]++
+	m.supervisorFor(name).setRetryCount(m.retries[name])
 	if m.retries[name] >= 10 {
 		m.statuses[name] = WorkerStateFailed
+		m.supervisorFor(name).setStatus(WorkerStateFailed)
 		m.mu.Unlock()
 		m.publishEvent(EventWorkerHealthChanged, map[string]any{"worker": name, "status": string(WorkerStateFailed), "error": "worker health check failed"})
 		return
 	}
 	m.statuses[name] = WorkerStateRestarting
+	m.supervisorFor(name).setStatus(WorkerStateRestarting)
 	m.mu.Unlock()
 
 	if err := m.restartWorker(name, false); err != nil {
 		m.mu.Lock()
 		m.statuses[name] = WorkerStateFailed
+		m.supervisorFor(name).setStatus(WorkerStateFailed)
 		m.mu.Unlock()
 		m.publishEvent(EventWorkerHealthChanged, map[string]any{"worker": name, "status": string(WorkerStateFailed), "error": redactedErrorMessage(err)})
 	}
@@ -773,6 +871,7 @@ func (m *Manager) StartConfiguredWorkers() error {
 		m.setConfigPatchStatus(name, state, detail)
 		if err != nil {
 			m.mu.Lock()
+			m.supervisorFor(name).setStatus(WorkerStateFailed)
 			m.statuses[name] = WorkerStateFailed
 			m.mu.Unlock()
 			m.publishEvent(EventWorkerHealthChanged, map[string]any{"worker": name, "status": string(WorkerStateFailed), "error": redactedErrorMessage(err)})
@@ -889,6 +988,7 @@ func (m *Manager) configuredConfigPath() string {
 }
 
 type liveWorkerTarget struct {
+	name string
 	port int
 }
 
@@ -901,7 +1001,7 @@ func (m *Manager) liveWorkersUsingUpstream(upstreamName string) []liveWorkerTarg
 		if worker.Upstream != upstreamName || m.workerStatusLocked(workerName) != WorkerStateRunning {
 			continue
 		}
-		targets = append(targets, liveWorkerTarget{port: worker.Port})
+		targets = append(targets, liveWorkerTarget{name: workerName, port: worker.Port})
 	}
 	return targets
 }
@@ -917,6 +1017,14 @@ func cloneConfig(cfg config.Config) config.Config {
 	}
 	for name, profile := range cfg.Upstreams {
 		out.Upstreams[name] = profile
+	}
+	return out
+}
+
+func buildPortIndex(workers map[string]config.WorkerConfig) map[int]string {
+	out := make(map[int]string, len(workers))
+	for name, worker := range workers {
+		out[worker.Port] = name
 	}
 	return out
 }

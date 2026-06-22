@@ -47,6 +47,16 @@ func (m *APITranslate) ProcessRequest(ctx context.Context, req *ProxyRequest) er
 	return nil
 }
 
+func (m *APITranslate) RequestBodyMode(req ProxyRequestMeta) RequestBodyMode {
+	if !m.config.Enabled || m.apiFormat() != chatCompletionsFormat || !isResponsesPath(req.Path) {
+		return RequestBodyStream
+	}
+	if !isJSONContentType(req.ContentType, req.Headers.Get("Content-Type")) {
+		return RequestBodyStream
+	}
+	return RequestBodyBuffer
+}
+
 func (m *APITranslate) apiFormat() string {
 	if m.config.Params == nil {
 		return ""

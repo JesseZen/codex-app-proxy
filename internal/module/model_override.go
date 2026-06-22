@@ -34,3 +34,13 @@ func (m *ModelOverride) ProcessRequest(ctx context.Context, req *ProxyRequest) e
 	req.Headers.Del("Content-Length")
 	return nil
 }
+
+func (m *ModelOverride) RequestBodyMode(req ProxyRequestMeta) RequestBodyMode {
+	if !m.config.Enabled || !isJSONContentType(req.ContentType, req.Headers.Get("Content-Type")) {
+		return RequestBodyStream
+	}
+	if model, _ := m.config.Params["model"].(string); model == "" {
+		return RequestBodyStream
+	}
+	return RequestBodyBuffer
+}

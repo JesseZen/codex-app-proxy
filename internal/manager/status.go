@@ -5,6 +5,7 @@ type WorkerState string
 
 const (
 	WorkerStateRunning       WorkerState = "running"
+	WorkerStateOutOfSync     WorkerState = "out_of_sync"
 	WorkerStateFailed        WorkerState = "failed"
 	WorkerStateStopping      WorkerState = "stopping"
 	WorkerStateRestarting    WorkerState = "restarting"

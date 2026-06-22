@@ -8,6 +8,7 @@ import (
 
 	"github.com/jesse/codex-app-proxy/internal/constants"
 	"github.com/jesse/codex-app-proxy/internal/module"
+	appruntime "github.com/jesse/codex-app-proxy/internal/runtime"
 	"github.com/jesse/codex-app-proxy/internal/upstream"
 )
 
@@ -22,6 +23,10 @@ func (w *Worker) serveManagement(rw http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == constants.ProxyStatusPath && r.Method == http.MethodGet {
 		w.writeStatus(rw)
+		return
+	}
+	if r.URL.Path == constants.ProxyRuntimePath && r.Method == http.MethodPut {
+		w.handleRuntime(rw, r)
 		return
 	}
 	if r.URL.Path == constants.ProxySwitchPath && r.Method == http.MethodPost {
@@ -49,6 +54,26 @@ func (w *Worker) writeStatus(rw http.ResponseWriter) {
 		status["config_patch_detail"] = snapshot.ConfigPatchDetail
 	}
 	writeJSON(rw, http.StatusOK, status)
+}
+
+func (w *Worker) handleRuntime(rw http.ResponseWriter, r *http.Request) {
+	var runtime appruntime.WorkerRuntime
+	if err := json.NewDecoder(r.Body).Decode(&runtime); err != nil {
+		writeJSON(rw, http.StatusBadRequest, map[string]any{"error": "invalid JSON"})
+		return
+	}
+	applied, err := w.UpdateRuntime(runtime)
+	if err != nil {
+		current := w.snapshots.Load()
+		writeJSON(rw, http.StatusBadRequest, map[string]any{"error": err.Error(), "snapshot_generation": current.Generation})
+		return
+	}
+	snapshot := w.snapshots.Load()
+	writeJSON(rw, http.StatusOK, map[string]any{
+		"applied_generation":  applied,
+		"snapshot_generation": snapshot.Generation,
+		"upstream":            snapshot.Upstream.Redacted(),
+	})
 }
 
 func (w *Worker) handleSwitch(rw http.ResponseWriter, r *http.Request) {

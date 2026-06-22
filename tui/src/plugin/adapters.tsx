@@ -265,6 +265,9 @@ export function createTuiApiAdapters(input: Input): Omit<TuiPluginApi, "lifecycl
         replace(render, onClose) {
           input.dialog.replace(render, onClose)
         },
+        push(render, onClose) {
+          input.dialog.push(render, onClose)
+        },
         clear() {
           input.dialog.clear()
         },

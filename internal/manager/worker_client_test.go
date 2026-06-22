@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/jesse/codex-app-proxy/internal/config"
+	appruntime "github.com/jesse/codex-app-proxy/internal/runtime"
 	"github.com/jesse/codex-app-proxy/internal/upstream"
 )
 
@@ -57,5 +58,40 @@ func TestHTTPWorkerClientPatchesAndTogglesWorkerModules(t *testing.T) {
 	}
 	if !sawPatch || !sawToggle {
 		t.Fatalf("missing calls patch=%v toggle=%v", sawPatch, sawToggle)
+	}
+}
+
+func TestHTTPWorkerClientAppliesRuntime(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/_proxy/runtime" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		var payload appruntime.WorkerRuntime
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.ID != "cli-openai" || payload.Generation != 4 {
+			t.Fatalf("bad payload: %#v", payload)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"applied_generation": 4})
+	}))
+	defer server.Close()
+
+	port := server.Listener.Addr().(*net.TCPAddr).Port
+	client := HTTPWorkerClient{Client: server.Client()}
+	status, err := client.ApplyRuntime(port, appruntime.WorkerRuntime{
+		ID:         "cli-openai",
+		Generation: 4,
+		ListenPort: port,
+		Upstream: appruntime.UpstreamRuntime{
+			ID:      "openai",
+			BaseURL: "https://api.openai.com/v1",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.AppliedGeneration != 4 {
+		t.Fatalf("bad applied generation: %#v", status)
 	}
 }

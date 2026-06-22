@@ -6,7 +6,7 @@ import { DialogSelect, type DialogSelectOption } from "../ui/dialog-select"
 import type { WorkerSummary } from "../context/sdk"
 import { DialogUpstreamPicker } from "./dialog-upstream-picker"
 import { DialogLogs } from "./dialog-logs"
-import { DialogModules } from "./dialog-modules"
+import { DialogModulePicker } from "./dialog-module"
 
 export function DialogWorkerStatus(props: { worker: WorkerSummary }) {
   const { theme } = useTheme()
@@ -32,7 +32,7 @@ export function DialogWorkerStatus(props: { worker: WorkerSummary }) {
       value: "modules",
       description: `${modules().length}`,
       category: "Actions",
-      onSelect: () => dialog.replace(() => <DialogModules worker={props.worker} />),
+      onSelect: () => dialog.replace(() => <DialogModulePicker worker={props.worker} />),
     },
   ])
 

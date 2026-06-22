@@ -41,6 +41,13 @@ func (m *ImageFilter) ProcessRequest(ctx context.Context, req *ProxyRequest) err
 	return nil
 }
 
+func (m *ImageFilter) RequestBodyMode(req ProxyRequestMeta) RequestBodyMode {
+	if !m.config.Enabled || !isJSONContentType(req.ContentType, req.Headers.Get("Content-Type")) {
+		return RequestBodyStream
+	}
+	return RequestBodyBuffer
+}
+
 func isJSONContentType(values ...string) bool {
 	for _, value := range values {
 		value = strings.ToLower(strings.TrimSpace(value))

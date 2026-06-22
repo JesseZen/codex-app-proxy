@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/jesse/codex-app-proxy/internal/module"
+	appruntime "github.com/jesse/codex-app-proxy/internal/runtime"
 	"github.com/jesse/codex-app-proxy/internal/upstream"
 )
 
@@ -96,6 +97,39 @@ func TestWorkerManagementStatusIncludesConfigPatchRecoveryDetail(t *testing.T) {
 		if !strings.Contains(res.Body.String(), want) {
 			t.Fatalf("status missing %s: %s", want, res.Body.String())
 		}
+	}
+}
+
+func TestWorkerManagementApplyRuntimeRebuildsAPITranslate(t *testing.T) {
+	w := New(Options{
+		Runtime: appruntime.WorkerRuntime{
+			ID:         "cli-openai",
+			Generation: 1,
+			ListenPort: 11199,
+			Upstream: appruntime.UpstreamRuntime{
+				ID:      "openai",
+				BaseURL: "https://old.example/v1",
+			},
+			Modules: map[string]appruntime.ModuleConfig{
+				"api_translate": {Enabled: true},
+			},
+		},
+	})
+
+	next := `{"id":"cli-openai","generation":2,"listen_port":11199,"upstream":{"id":"openrouter","base_url":"https://api.openrouter.ai/api/v1","api_format":"chat_completions"},"modules":{"api_translate":{"enabled":true,"params":{"api_format":"chat_completions"}}}}`
+	res := httptest.NewRecorder()
+	w.ServeHTTP(res, httptest.NewRequest(http.MethodPut, "http://proxy.local/_proxy/runtime", strings.NewReader(next)))
+	if res.Code != http.StatusOK {
+		t.Fatalf("apply runtime failed: %d %s", res.Code, res.Body.String())
+	}
+
+	status := httptest.NewRecorder()
+	w.ServeHTTP(status, httptest.NewRequest(http.MethodGet, "http://proxy.local/_proxy/status", nil))
+	if !strings.Contains(status.Body.String(), `"snapshot_generation":2`) || !strings.Contains(status.Body.String(), `"api_format":"chat_completions"`) {
+		t.Fatalf("status did not expose applied runtime: %s", status.Body.String())
+	}
+	if strings.Contains(status.Body.String(), "sk-") {
+		t.Fatalf("status leaked secret: %s", status.Body.String())
 	}
 }
 

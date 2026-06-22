@@ -1,20 +1,19 @@
 package worker
 
 import (
-	"bytes"
 	"compress/flate"
 	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/klauspost/compress/zstd"
 
 	"github.com/jesse/codex-app-proxy/internal/constants"
 	"github.com/jesse/codex-app-proxy/internal/module"
+	appruntime "github.com/jesse/codex-app-proxy/internal/runtime"
 )
 
 type Worker struct {
@@ -24,6 +23,7 @@ type Worker struct {
 
 type Options struct {
 	Snapshot RuntimeConfigSnapshot
+	Runtime  appruntime.WorkerRuntime
 	Client   *http.Client
 }
 
@@ -32,13 +32,33 @@ func New(opts Options) *Worker {
 	if client == nil {
 		client = http.DefaultClient
 	}
+	snapshot := opts.Snapshot
+	if opts.Runtime.Upstream.BaseURL != "" {
+		var err error
+		snapshot, err = snapshotFromRuntime(opts.Runtime)
+		if err != nil {
+			panic(err)
+		}
+	}
+	snapshot = snapshot.withCompiledUpstream()
 	return &Worker{
-		snapshots: newSnapshotHolder(opts.Snapshot),
+		snapshots: newSnapshotHolder(snapshot),
 		client:    client,
 	}
 }
 
+func (w *Worker) UpdateRuntime(runtime appruntime.WorkerRuntime) (appruntime.Generation, error) {
+	snapshot, err := snapshotFromRuntime(runtime)
+	if err != nil {
+		return 0, err
+	}
+	snapshot = snapshot.withCompiledUpstream()
+	w.snapshots.Store(snapshot)
+	return appruntime.Generation(snapshot.Generation), nil
+}
+
 func (w *Worker) UpdateSnapshot(snapshot RuntimeConfigSnapshot) error {
+	snapshot = snapshot.withCompiledUpstream()
 	if err := snapshot.Validate(); err != nil {
 		return err
 	}
@@ -53,45 +73,64 @@ func (w *Worker) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	snapshot := w.snapshots.Load()
+	snapshot = snapshot.withCompiledUpstream()
 	if err := w.proxyRequest(rw, r, snapshot); err != nil {
 		http.Error(rw, err.Error(), http.StatusBadGateway)
 	}
 }
 
 func (w *Worker) proxyRequest(rw http.ResponseWriter, r *http.Request, snapshot RuntimeConfigSnapshot) error {
-	body, contentType, err := readRequestBody(r)
-	if err != nil {
-		return err
-	}
+	ctx := r.Context()
 	proxyReq := &module.ProxyRequest{
 		Method:       r.Method,
 		Path:         r.URL.Path,
 		Headers:      r.Header.Clone(),
-		Body:         body,
-		ContentType:  contentType,
 		OriginalPath: r.URL.Path,
 	}
-
-	ctx := r.Context()
+	bodyRequired := false
+	for _, middleware := range snapshot.Modules {
+		plan := middleware.RequestBodyMode(module.ProxyRequestMeta{
+			Method:      proxyReq.Method,
+			Path:        proxyReq.Path,
+			Headers:     proxyReq.Headers,
+			ContentType: proxyReq.ContentType,
+		})
+		if plan == module.RequestBodyBuffer {
+			bodyRequired = true
+			break
+		}
+	}
+	if bodyRequired {
+		body, contentType, err := readRequestBody(r)
+		if err != nil {
+			return err
+		}
+		proxyReq.Body = body
+		proxyReq.ContentType = contentType
+	}
 	for _, middleware := range snapshot.Modules {
 		if err := middleware.ProcessRequest(ctx, proxyReq); err != nil {
 			return err
 		}
 	}
 
-	upstreamURL, err := joinURL(snapshot.Upstream.BaseURL, proxyReq.Path, r.URL.RawQuery)
+	upstreamURL, err := snapshot.CompiledUpstream.Join(proxyReq.Path, r.URL.RawQuery)
 	if err != nil {
 		return err
 	}
-	upstreamReq, err := http.NewRequestWithContext(ctx, proxyReq.Method, upstreamURL, bytes.NewReader(proxyReq.Body))
+	var body io.Reader = r.Body
+	if bodyRequired {
+		body = strings.NewReader(string(proxyReq.Body))
+	}
+	upstreamReq, err := http.NewRequestWithContext(ctx, proxyReq.Method, upstreamURL, body)
 	if err != nil {
 		return err
 	}
 	upstreamReq.Header = proxyReq.Headers.Clone()
-	if snapshot.Upstream.APIKey != "" {
-		upstreamReq.Header.Set("Authorization", "Bearer "+snapshot.Upstream.APIKey)
+	if snapshot.CompiledUpstream.AuthorizationHeader != "" {
+		upstreamReq.Header.Set("Authorization", snapshot.CompiledUpstream.AuthorizationHeader)
 	}
-	if len(proxyReq.Body) > 0 {
+	if bodyRequired && len(proxyReq.Body) > 0 {
 		upstreamReq.ContentLength = int64(len(proxyReq.Body))
 	}
 
@@ -149,20 +188,6 @@ func readRequestBody(r *http.Request) ([]byte, string, error) {
 	}
 	body, err := io.ReadAll(reader)
 	return body, r.Header.Get("Content-Type"), err
-}
-
-func joinURL(baseURL string, requestPath string, rawQuery string) (string, error) {
-	upstream, err := url.Parse(baseURL)
-	if err != nil {
-		return "", err
-	}
-	basePath := strings.TrimRight(upstream.Path, "/")
-	if requestPath == "" {
-		requestPath = "/"
-	}
-	upstream.Path = basePath + requestPath
-	upstream.RawQuery = rawQuery
-	return upstream.String(), nil
 }
 
 func copyProxyResponse(ctx context.Context, rw http.ResponseWriter, resp *module.ProxyResponse) error {

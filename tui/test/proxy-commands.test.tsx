@@ -57,7 +57,8 @@ function createProxyHarness() {
         snapshot_generation: 3,
         log_level: "simple",
         modules: {
-          api_translate: { enabled: true },
+          model_override: { enabled: false, params: { model: "gpt-old" } },
+          api_translate: { enabled: true, params: { api_format: "chat_completions" } },
           request_log: { enabled: false },
         },
       },
@@ -86,6 +87,7 @@ function createProxyHarness() {
   }
   const calls = {
     patchWorker: [] as Array<{ port: number; upstream?: string; log_level?: string }>,
+    patchModule: [] as Array<{ port: number; module: string; body: Record<string, unknown> }>,
     patchUpstream: [] as Array<{ name: string; body: { base_url?: string; api_key?: string; api_format?: string } }>,
     saveConfig: 0,
     getLogs: 0,
@@ -146,6 +148,9 @@ function createProxyHarness() {
     if (url.pathname === "/api/workers/6767" && url.searchParams.get("__method") === "PATCH") {
       return undefined
     }
+    if (url.pathname === "/api/workers/6767/modules/model_override" && url.searchParams.get("__method") === "PATCH") {
+      return undefined
+    }
     return undefined
   })
 
@@ -168,6 +173,27 @@ function createProxyHarness() {
         workers.set(6767, { ...workers.get(6767)!, log_level: body.log_level })
       }
       return json(workers.get(6767)!)
+    }
+
+    if (url.pathname === "/api/workers/6767/modules/model_override" && method === "PATCH") {
+      const body = JSON.parse(String(init?.body ?? "null")) as { enabled: boolean; params?: { model?: string } }
+      calls.patchModule.push({ port: 6767, module: "model_override", body })
+      workers.set(6767, {
+        ...workers.get(6767)!,
+        modules: {
+          ...workers.get(6767)!.modules,
+          model_override: body,
+        },
+      })
+      return json({
+        worker: "app",
+        port: 6767,
+        module: {
+          name: "model_override",
+          enabled: body.enabled,
+          params: body.params,
+        },
+      })
     }
 
     if (url.pathname.startsWith("/api/upstreams/") && method === "PATCH") {
@@ -357,6 +383,63 @@ test("proxy status detail exposes worker follow-up actions", async () => {
   }
 })
 
+test("proxy modules editor patches module params through field flow", async () => {
+  const app = await mountProxyApp()
+
+  try {
+    app.api.keymap.dispatchCommand("proxy.modules")
+    await app.render()
+    expect(app.frame()).toContain("Worker Modules")
+
+    app.api.keymap.dispatchCommand("dialog.select.submit")
+    await wait(async () => {
+      await app.render()
+      return app.frame().includes("Modules: app")
+    })
+
+    app.api.keymap.dispatchCommand("dialog.select.submit")
+    await wait(async () => {
+      await app.render()
+      return app.frame().includes("Edit Module: app")
+    })
+
+    app.api.keymap.dispatchCommand("dialog.select.next")
+    await app.render()
+    app.api.keymap.dispatchCommand("dialog.select.submit")
+    await wait(async () => {
+      await app.render()
+      return app.frame().includes("Model: model_override")
+    })
+
+    await app.mockInput.typeText("gpt-live")
+    app.api.keymap.dispatchCommand("dialog.prompt.submit")
+    await wait(() => app.calls.patchModule.length === 1)
+
+    expect(app.calls.patchModule).toEqual([
+      {
+        port: 6767,
+        module: "model_override",
+        body: {
+          enabled: false,
+          params: { model: "gpt-live" },
+        },
+      },
+    ])
+
+    expect(app.frame()).toContain("Worker Modules")
+    expect(app.frame()).not.toContain("Modules: app")
+
+    app.mockInput.pressEscape()
+    await wait(async () => {
+      await app.render()
+      return !app.frame().includes("Worker Modules")
+    })
+    expect(app.frame()).not.toContain("Worker Modules")
+  } finally {
+    await app.cleanup()
+  }
+})
+
 test("proxy upstream registers an upstream command", async () => {
   const app = await mountProxyApp()
 
@@ -432,7 +515,12 @@ test("proxy upstream creates a new upstream", async () => {
       return app.frame().includes("Base URL: upstream")
     })
     await app.mockInput.typeText("https://api.groq.com/openai/v1")
-    app.api.keymap.dispatchCommand("dialog.prompt.submit")
+    await app.render()
+    await wait(async () => {
+      await app.render()
+      return app.frame().includes("https://api.groq.com/openai/v1")
+    })
+    app.mockInput.pressEnter()
     await wait(() => app.calls.patchUpstream.length === 1)
 
     expect(app.calls.patchUpstream).toEqual([
@@ -466,26 +554,23 @@ test("proxy upstream editor shows empty api_format as dash and persists edits", 
     expect(frame).toContain("API Format")
     expect(frame).not.toContain("chat_completions")
 
-    app.api.keymap.dispatchCommand("dialog.select.next")
-    app.api.keymap.dispatchCommand("dialog.select.next")
+    app.api.keymap.dispatchCommand("dialog.select.end")
+    await app.render()
     app.api.keymap.dispatchCommand("dialog.select.submit")
-    await wait(async () => {
-      await app.render()
-      return app.frame().includes("API Format: https://api.openai.com/v1")
-    })
-
+    await app.render()
     await app.mockInput.typeText("responses")
+    await app.render()
     app.api.keymap.dispatchCommand("dialog.prompt.submit")
     await wait(() => app.calls.patchUpstream.length === 1)
-
-    expect(app.calls.patchUpstream).toEqual([
-      { name: "openai", body: { api_format: "responses" } },
-    ])
-
     await wait(async () => {
       await app.render()
       return app.frame().includes("responses")
     })
+    await app.render()
+
+    expect(app.calls.patchUpstream).toEqual([
+      { name: "openai", body: { api_format: "responses" } },
+    ])
     expect(app.frame()).toContain("responses")
   } finally {
     await app.cleanup()
@@ -555,6 +640,55 @@ test("proxy workers editor patches log_level field", async () => {
     await app.render()
 
     expect(app.calls.patchWorker).toEqual([{ port: 6767, upstream: "openai", log_level: "detail" }])
+  } finally {
+    await app.cleanup()
+  }
+})
+
+test("proxy upstream editor ESC returns to upstream list when stack depth > 1", async () => {
+  const app = await mountProxyApp()
+
+  try {
+    app.api.keymap.dispatchCommand("proxy.upstream")
+    await app.render()
+    expect(app.frame()).toContain("Manage Upstreams")
+
+    app.api.keymap.dispatchCommand("dialog.select.next")
+    await app.render()
+    app.api.keymap.dispatchCommand("dialog.select.submit")
+    await wait(async () => {
+      await app.render()
+      return app.frame().includes("Edit Upstream: openai")
+    })
+    expect(app.frame()).toContain("esc back")
+
+    app.mockInput.pressEscape()
+    await wait(async () => {
+      await app.render()
+      return app.frame().includes("Manage Upstreams") && !app.frame().includes("Edit Upstream: openai")
+    })
+    expect(app.frame()).toContain("Manage Upstreams")
+    expect(app.frame()).not.toContain("Edit Upstream: openai")
+  } finally {
+    await app.cleanup()
+  }
+})
+
+test("proxy upstream editor ESC closes dialog when stack depth is 1", async () => {
+  const app = await mountProxyApp()
+
+  try {
+    app.api.keymap.dispatchCommand("proxy.upstream")
+    await app.render()
+    expect(app.frame()).toContain("Manage Upstreams")
+    expect(app.frame()).not.toContain("esc back")
+
+    app.mockInput.pressEscape()
+    await wait(async () => {
+      await app.render()
+      return !app.frame().includes("Manage Upstreams")
+    })
+    expect(app.frame()).not.toContain("Manage Upstreams")
   } finally {
     await app.cleanup()
   }

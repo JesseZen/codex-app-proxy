@@ -6,6 +6,24 @@ import (
 	"net/http"
 )
 
+type RequestBodyMode int
+
+const (
+	RequestBodyStream RequestBodyMode = iota
+	RequestBodyBuffer
+)
+
+type ProxyRequestMeta struct {
+	Method      string
+	Path        string
+	Headers     http.Header
+	ContentType string
+}
+
+type RequestBodyPlanner interface {
+	RequestBodyMode(req ProxyRequestMeta) RequestBodyMode
+}
+
 type ModuleConfig struct {
 	Enabled bool           `json:"enabled"`
 	Params  map[string]any `json:"params,omitempty"`
@@ -17,6 +35,7 @@ type Middleware interface {
 	WrapResponse(ctx context.Context, req *ProxyRequest, upstream *ProxyResponse) (*ProxyResponse, error)
 	Config() ModuleConfig
 	UpdateConfig(cfg ModuleConfig) error
+	RequestBodyPlanner
 }
 
 func CloneMiddleware(m Middleware) Middleware {
@@ -55,6 +74,10 @@ type ProxyResponse struct {
 type baseMiddleware struct {
 	name   string
 	config ModuleConfig
+}
+
+func (m *baseMiddleware) RequestBodyMode(req ProxyRequestMeta) RequestBodyMode {
+	return RequestBodyStream
 }
 
 func (m *baseMiddleware) Name() string {
