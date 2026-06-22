@@ -3,26 +3,10 @@ import { DialogConfig } from "./dialog-config"
 import { DialogLogs } from "./dialog-logs"
 import { DialogModulePicker } from "./dialog-module"
 import { DialogStatus } from "./dialog-status"
-import { showNewWorkerDialog } from "./dialog-new-worker"
 import { DialogUpstream } from "./dialog-upstream"
 import { DialogWorkerPicker } from "./dialog-worker-picker"
 import { DialogWorkers } from "./dialog-workers"
 import { DialogLaunch } from "./dialog-launch"
-
-type WorkerClient = {
-  createWorker(input: { name: string; port: number; upstream: string }): Promise<unknown>
-}
-
-type DialogLike = {
-  clear(): void
-  replace(input: any, onClose?: () => void): void
-  push(input: any, onClose?: () => void): void
-}
-
-type ToastLike = {
-  show(input: { title?: string; message: string; variant?: "info" | "success" | "warning" | "error"; duration?: number }): void
-  error(error: unknown): void
-}
 
 export function registerProxyCommands(api: TuiPluginApi) {
   return api.keymap.registerLayer({
@@ -104,32 +88,6 @@ export function registerProxyCommands(api: TuiPluginApi) {
               }}
             />
           ))
-        },
-      },
-      {
-        namespace: "palette",
-        name: "proxy.new",
-        title: "Create worker",
-        category: "Proxy",
-        slashName: "new-worker",
-        run() {
-          const toast: ToastLike = {
-            show(input) {
-              api.ui.toast(input)
-            },
-            error(error) {
-              api.ui.toast({
-                title: "Error",
-                message: error instanceof Error ? error.message : String(error),
-                variant: "error",
-              })
-            },
-          }
-          void showNewWorkerDialog(
-            api.ui.dialog as DialogLike as never,
-            api.client as unknown as WorkerClient as never,
-            toast as never,
-          )
         },
       },
       {

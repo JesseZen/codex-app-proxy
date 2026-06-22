@@ -115,7 +115,6 @@ cd tui && CODEX_PROXY_URL=http://localhost:9090 bun run dev
 | `/workers` | | 管理 Worker（创建、编辑 log_level） |
 | `/upstream` | | 管理 Upstream（创建、编辑 base_url/api_key/api_format） |
 | `/modules` | | 管理 Worker 模块（按 Worker 启用/禁用） |
-| `/new-worker` | | 创建新 Worker |
 | `/logs` | | 查看 Worker 日志 |
 | `/launch` | | 通过 cli 角色 Worker 启动 Codex CLI |
 | `/exit` | `/quit` `/q` | 退出 |

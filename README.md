@@ -115,7 +115,6 @@ After launching, you'll see an empty screen with an input bar at the bottom. Typ
 | `/workers` | | Manage workers (create, edit log_level) |
 | `/upstream` | | Manage upstreams (create, edit base_url/api_key/api_format) |
 | `/modules` | | Manage worker modules (enable/disable per worker) |
-| `/new-worker` | | Create a new Worker |
 | `/logs` | | View Worker logs |
 | `/launch` | | Launch Codex CLI through a cli-role worker |
 | `/exit` | `/quit` `/q` | Exit |
