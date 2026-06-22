@@ -144,7 +144,7 @@ func SetWorkerRunnerForTest(runner func(WorkerRuntimeConfig) error) func() {
 }
 
 func buildModules(configs map[string]module.ModuleConfig, apiFormat string) []module.Middleware {
-	names := []string{"image_filter", "api_translate", "model_override", "request_log", "debug_sse"}
+	names := []string{"image_filter", "debug_sse", "api_translate", "model_override", "request_log"}
 	modules := make([]module.Middleware, 0, len(names))
 	for _, name := range names {
 		cfg := configs[name]

@@ -3,6 +3,8 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"io"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -68,9 +70,53 @@ func TestBuildModulesIncludesFixedOrderAuxiliaryModules(t *testing.T) {
 	for _, middleware := range modules {
 		names = append(names, middleware.Name())
 	}
-	want := strings.Join([]string{"image_filter", "api_translate", "model_override", "request_log", "debug_sse"}, ",")
+	want := strings.Join([]string{"image_filter", "debug_sse", "api_translate", "model_override", "request_log"}, ",")
 	if strings.Join(names, ",") != want {
 		t.Fatalf("bad module order %v", names)
+	}
+}
+
+func TestBuildModulesDebugSSEWrapsTranslatedResponsesStream(t *testing.T) {
+	var logBuf bytes.Buffer
+	modules := buildModules(map[string]module.ModuleConfig{
+		"debug_sse":     {Enabled: true},
+		"api_translate": {Enabled: true},
+	}, "chat_completions")
+	for i, middleware := range modules {
+		if middleware.Name() == "debug_sse" {
+			modules[i] = module.NewDebugSSE(module.ModuleConfig{Enabled: true}, &logBuf)
+		}
+	}
+
+	resp := &module.ProxyResponse{
+		StatusCode:  http.StatusOK,
+		Headers:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		ContentType: "text/event-stream",
+		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+			`data: {"id":"chatcmpl-test","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}` + "\n\n",
+			`data: {"id":"chatcmpl-test","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}` + "\n\n",
+			"data: [DONE]\n\n",
+		}, ""))),
+	}
+	req := &module.ProxyRequest{Path: "/v1/responses"}
+
+	var err error
+	for i := len(modules) - 1; i >= 0; i-- {
+		resp, err = modules[i].WrapResponse(context.Background(), req, resp)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	out, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "event: response.completed") {
+		t.Fatalf("missing translated response completion event: %s", out)
+	}
+	if !strings.Contains(logBuf.String(), "response_completed=true") {
+		t.Fatalf("debug_sse did not observe translated completion event: %s", logBuf.String())
 	}
 }
 

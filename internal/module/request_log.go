@@ -22,6 +22,10 @@ func (m *RequestLog) ProcessRequest(ctx context.Context, req *ProxyRequest) erro
 	if !m.config.Enabled || m.writer == nil {
 		return nil
 	}
+	if req.OriginalPath != "" && req.OriginalPath != req.Path {
+		_, _ = fmt.Fprintf(m.writer, "INFO %s %s -> %s\n", req.Method, req.OriginalPath, req.Path)
+		return nil
+	}
 	_, _ = fmt.Fprintf(m.writer, "INFO %s %s\n", req.Method, req.Path)
 	return nil
 }

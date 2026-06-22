@@ -123,6 +123,42 @@ func TestManagerSyncsCodexProfilesOnStartup(t *testing.T) {
 	}
 }
 
+func TestManagerLogSinkWritesToDefaultHomeLogDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	m := New(Config{
+		Config: config.Config{
+			Workers: map[string]config.WorkerConfig{
+				"app": {Port: 6767, Upstream: "openai"},
+			},
+			Upstreams: map[string]config.UpstreamProfile{
+				"openai": {BaseURL: "https://api.openai.com/v1"},
+			},
+		},
+	})
+
+	sink := m.LogSink("app")
+	if sink == nil {
+		t.Fatal("expected log sink")
+	}
+	if _, err := sink.Write([]byte("WARN upstream closed early\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := sink.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	logPath := filepath.Join(home, ".codex-proxy", "logs", "worker-6767.log")
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("expected default log file at %s: %v", logPath, err)
+	}
+	if !strings.Contains(string(data), "WARN upstream closed early") {
+		t.Fatalf("unexpected log file content: %s", data)
+	}
+}
+
 func TestManagerBuildsWorkerRuntimeConfigForFDWithoutSecretInArgs(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "sk-secret")
 	m := New(Config{
