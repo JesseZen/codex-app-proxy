@@ -57,40 +57,47 @@ export function DialogPrompt(props: DialogPromptProps) {
         category: "Dialog",
         run: confirm,
       },
-      {
-        name: "dialog.select.prev",
-        title: "Previous dialog item",
-        category: "Dialog",
-        run() {
-          if (props.directoryCompletion && suggestions().length) setSelected((value) => value > 0 ? value - 1 : suggestions().length - 1)
-        },
-      },
-      {
-        name: "dialog.select.next",
-        title: "Next dialog item",
-        category: "Dialog",
-        run() {
-          if (props.directoryCompletion && suggestions().length) setSelected((value) => value + 1 < suggestions().length ? value + 1 : 0)
-        },
-      },
-      {
-        name: "prompt.autocomplete.complete",
-        title: "Complete dialog directory",
-        category: "Dialog",
-        run() {
-          if (!props.directoryCompletion) return
-          const next = suggestions()[selected()] ?? suggestions()[0]
-          if (!next) return
-          textarea.setText(next.value)
-          textarea.gotoLineEnd()
-          setQuery(next.value)
-        },
-      },
+      ...(props.directoryCompletion
+        ? [
+            {
+              name: "dialog.select.prev",
+              title: "Previous dialog item",
+              category: "Dialog",
+              run() {
+                if (suggestions().length) setSelected((value) => value > 0 ? value - 1 : suggestions().length - 1)
+              },
+            },
+            {
+              name: "dialog.select.next",
+              title: "Next dialog item",
+              category: "Dialog",
+              run() {
+                if (suggestions().length) setSelected((value) => value + 1 < suggestions().length ? value + 1 : 0)
+              },
+            },
+            {
+              name: "prompt.autocomplete.complete",
+              title: "Complete dialog directory",
+              category: "Dialog",
+              run() {
+                const next = suggestions()[selected()] ?? suggestions()[0]
+                if (!next) return
+                textarea.setText(next.value)
+                textarea.gotoLineEnd()
+                setQuery(next.value)
+              },
+            },
+          ]
+        : []),
     ],
     bindings: [
       ...tuiConfig.keybinds.gather("dialog.prompt", ["dialog.prompt.submit"]),
-      ...tuiConfig.keybinds.gather("dialog.select", ["dialog.select.prev", "dialog.select.next"]),
-      ...tuiConfig.keybinds.gather("prompt.autocomplete", ["prompt.autocomplete.complete"]),
+      ...(props.directoryCompletion
+        ? [
+            ...tuiConfig.keybinds.gather("dialog.select", ["dialog.select.prev", "dialog.select.next"]),
+            ...tuiConfig.keybinds.gather("prompt.autocomplete", ["prompt.autocomplete.complete"]),
+          ]
+        : []),
     ],
   }))
 
@@ -135,7 +142,7 @@ export function DialogPrompt(props: DialogPromptProps) {
         <text attributes={TextAttributes.BOLD} fg={theme.text}>
           {props.title}
         </text>
-        <text fg={theme.textMuted} onMouseUp={() => dialog.clear()}>
+        <text fg={theme.textMuted} onMouseUp={() => dialog.pop()}>
           esc
         </text>
       </box>

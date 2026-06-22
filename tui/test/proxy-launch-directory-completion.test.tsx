@@ -103,3 +103,86 @@ test("launch dialog enables directory completion with current project directory"
     mock.restore()
   }
 })
+
+test("launch directory prompt ESC returns to worker picker", async () => {
+  const setup = await createTestRenderer({ width: 80, height: 24, useThread: false, kittyKeyboard: true })
+  const core = await import("@opentui/core")
+  mock.module("@opentui/core", () => ({ ...core, createCliRenderer: async () => setup.renderer }))
+
+  const events = createEventSource()
+  const calls = createFetch((url) => {
+    if (url.pathname === "/api/workers")
+      return json({
+        workers: [
+          {
+            name: "test-cli",
+            port: 1234,
+            role: "cli",
+            upstream: { name: "test", base_url: "", has_api_key: false },
+            status: "running",
+            snapshot_generation: 0,
+            log_level: "info",
+          },
+        ],
+      })
+    return undefined
+  })
+
+  let api!: TuiPluginApi
+  let started!: () => void
+  const ready = new Promise<void>((resolve) => {
+    started = resolve
+  })
+
+  try {
+    const { run } = await import("../src/app")
+    const task = Effect.runPromise(
+      run({
+        url: "http://test",
+        directory,
+        config: createTuiResolvedConfig({ plugin_enabled: {} }),
+        fetch: calls.fetch,
+        events: events.source,
+        args: {},
+        pluginHost: {
+          async start(input) {
+            api = input.api
+            registerProxyCommands(input.api)
+            started()
+          },
+          async dispose() {},
+        },
+      }).pipe(Effect.provide(Global.defaultLayer)),
+    )
+
+    await ready
+    await setup.renderOnce()
+    await setup.renderOnce()
+
+    api.keymap.dispatchCommand("proxy.launch")
+    await wait(async () => {
+      await setup.renderOnce()
+      return setup.captureCharFrame().includes("test-cli")
+    })
+
+    api.keymap.dispatchCommand("dialog.select.submit")
+    await wait(async () => {
+      await setup.renderOnce()
+      const frame = setup.captureCharFrame()
+      return frame.includes("Launch Codex") && frame.includes(directory)
+    })
+
+    setup.mockInput.pressEscape()
+    await wait(async () => {
+      await setup.renderOnce()
+      const frame = setup.captureCharFrame()
+      return frame.includes("Launch Codex CLI") && frame.includes("test-cli")
+    })
+
+    setup.renderer.destroy()
+    await task
+  } finally {
+    if (!setup.renderer.isDestroyed) setup.renderer.destroy()
+    mock.restore()
+  }
+})

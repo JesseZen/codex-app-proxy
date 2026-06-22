@@ -40,6 +40,7 @@ export function DialogLaunch() {
         : undefined,
     })
     if (workspace === null) return
+    dialog.clear()
     const command = createProxyLaunchCommand({
       workerPort: worker.port,
       profile: worker.name,
@@ -66,7 +67,6 @@ export function DialogLaunch() {
       options={options()}
       placeholder="Search cli workers..."
       onSelect={(option) => {
-        dialog.clear()
         void launch(option.value)
       }}
     />

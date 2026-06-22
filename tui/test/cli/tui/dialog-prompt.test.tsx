@@ -23,6 +23,11 @@ async function mountPrompt(input: {
   root: string
   keybinds: Partial<TuiKeybind.Keybinds>
   onConfirm: (value: string) => void
+  value?: string
+  directoryCompletion?: {
+    basePath: string
+    maxResults?: number
+  }
 }) {
   const state = path.join(input.root, "state")
   await mkdir(state, { recursive: true })
@@ -71,7 +76,12 @@ async function mountPrompt(input: {
               <ThemeProvider mode="dark">
                 <ToastProvider>
                   <DialogProvider>
-                    <DialogPrompt title="Rename Session" value="draft" onConfirm={input.onConfirm} />
+                    <DialogPrompt
+                      title="Rename Session"
+                      value={input.value ?? "draft"}
+                      directoryCompletion={input.directoryCompletion}
+                      onConfirm={input.onConfirm}
+                    />
                   </DialogProvider>
                 </ToastProvider>
               </ThemeProvider>
@@ -141,6 +151,28 @@ test("dialog prompt submit can be rebound separately from input submit", async (
     prompt.app.mockInput.pressKey("y", { ctrl: true })
 
     expect(confirmed).toEqual(["draft"])
+  } finally {
+    await prompt.cleanup()
+  }
+})
+
+test("dialog prompt without directory completion preserves textarea down navigation", async () => {
+  await using tmp = await tmpdir()
+  const prompt = await mountPrompt({
+    root: tmp.path,
+    keybinds: {},
+    value: "alpha\nbeta",
+    onConfirm: () => {},
+  })
+
+  try {
+    await wait(() => prompt.app.renderer.currentFocusedEditor instanceof TextareaRenderable)
+    const textarea = prompt.app.renderer.currentFocusedEditor
+    if (!(textarea instanceof TextareaRenderable)) throw new Error("expected focused dialog textarea")
+
+    expect(textarea.logicalCursor.row).toBe(0)
+    prompt.app.mockInput.pressArrow("down")
+    expect(textarea.logicalCursor.row).toBe(1)
   } finally {
     await prompt.cleanup()
   }
