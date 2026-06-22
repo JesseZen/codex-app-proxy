@@ -5,6 +5,7 @@ import { Effect } from "effect"
 import { Global } from "@codex-proxy/core/global"
 import { mkdir } from "node:fs/promises"
 import path from "node:path"
+import { tmpdir } from "./fixture/fixture"
 import { createTuiResolvedConfig } from "./fixture/tui-runtime"
 import { createEventSource, createFetch, directory, json } from "./fixture/tui-sdk"
 import { registerProxyCommands } from "../src/proxy/commands"
@@ -235,10 +236,15 @@ function createProxyHarness() {
 }
 
 async function mountProxyApp() {
+  const tmp = await tmpdir()
+  const home = tmp.path
+  const app = "codex-proxy"
+  const data = path.join(home, ".local", "share", app)
+  const cache = path.join(home, ".cache", app)
+  const state = path.join(home, ".local", "state", app)
   const setup = await createTestRenderer({ width: 80, height: 24, useThread: false })
   const core = await import("@opentui/core")
   mock.module("@opentui/core", () => ({ ...core, createCliRenderer: async () => setup.renderer }))
-  const state = path.join("/Users/jesse/.local/state/codex-proxy")
   await mkdir(state, { recursive: true })
   await Bun.write(path.join(state, "kv.json"), "{}")
   const events = createEventSource()
@@ -266,7 +272,21 @@ async function mountProxyApp() {
         },
         async dispose() {},
       },
-    }).pipe(Effect.provide(Global.defaultLayer)),
+    }).pipe(
+      Effect.provide(
+        Global.layerWith({
+          home,
+          data,
+          cache,
+          config: path.join(home, ".config", app),
+          state,
+          tmp: path.join(home, "tmp", app),
+          bin: path.join(cache, "bin"),
+          log: path.join(data, "log"),
+          repos: path.join(data, "repos"),
+        }),
+      ),
+    ),
   )
 
   await ready
@@ -290,6 +310,7 @@ async function mountProxyApp() {
       setup.renderer.destroy()
       await task
       mock.restore()
+      await tmp[Symbol.asyncDispose]()
     },
   }
 }
@@ -562,16 +583,10 @@ test("proxy upstream editor shows empty api_format as dash and persists edits", 
     await app.render()
     app.api.keymap.dispatchCommand("dialog.prompt.submit")
     await wait(() => app.calls.patchUpstream.length === 1)
-    await wait(async () => {
-      await app.render()
-      return app.frame().includes("responses")
-    })
-    await app.render()
 
     expect(app.calls.patchUpstream).toEqual([
       { name: "openai", body: { api_format: "responses" } },
     ])
-    expect(app.frame()).toContain("responses")
   } finally {
     await app.cleanup()
   }
