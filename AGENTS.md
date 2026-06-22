@@ -35,3 +35,7 @@
 ## 变更规模
 
 18. 单次变更非机械改动不超过 800 行，复杂逻辑改动不超过 500 行，超出要拆成可审查阶段。
+
+## 版本
+
+19. 版本号由 git tag 驱动，构建时通过 `git describe --tags` 注入。切换 channel：`gh workflow run bump.yml -f channel=beta`

@@ -1,0 +1,81 @@
+name: Bump Version
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Switch prerelease channel (alpha|beta|rc|release)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bump-version
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch'
+      || github.event.head_commit.committer.email != 'github-actions[bot]@users.noreply.github.com'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute and push next version tag
+        run: |
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          CHANNEL="${{ github.event.inputs.channel }}"
+
+          if [[ -n "$CHANNEL" ]]; then
+            # Channel switch: use base from latest tag + new channel
+            if [[ -z "$LATEST_TAG" ]]; then
+              echo "Error: no existing tags to derive base version from" >&2
+              exit 1
+            fi
+            BASE="${LATEST_TAG#v}"
+            BASE="${BASE%%-*}"
+            if [[ "$CHANNEL" == "release" ]]; then
+              NEW_TAG="v${BASE}"
+            else
+              NEW_TAG="v${BASE}-${CHANNEL}.1"
+            fi
+            # Delete old channel tags
+            for t in $(git tag -l); do
+              if [[ "$t" != "$NEW_TAG" ]]; then
+                git push origin ":refs/tags/$t" 2>/dev/null || true
+                git tag -d "$t" 2>/dev/null || true
+              fi
+            done
+          elif [[ -z "$LATEST_TAG" ]]; then
+            NEW_TAG="v0.1.0-alpha.1"
+          else
+            TAG_VER="${LATEST_TAG#v}"
+            BASE="${TAG_VER%%-*}"
+            SUFFIX="${TAG_VER#*-}"
+            if [[ "$SUFFIX" == "$TAG_VER" ]]; then
+              # Release tag (no prerelease suffix) — don't auto-bump
+              echo "Latest tag $LATEST_TAG is a release, skipping auto-bump"
+              exit 0
+            fi
+            PRE="${SUFFIX%%.*}"
+            NUM="${SUFFIX##*.}"
+            COMMITS=$(git rev-list --first-parent "${LATEST_TAG}"..HEAD --count)
+            if [[ "$COMMITS" -eq 0 ]]; then
+              echo "No new commits since $LATEST_TAG, skipping"
+              exit 0
+            fi
+            NEW_NUM=$((NUM + COMMITS))
+            NEW_TAG="v${BASE}-${PRE}.${NEW_NUM}"
+          fi
+
+          git tag "$NEW_TAG"
+          git push origin "$NEW_TAG"
+          echo "Tagged $NEW_TAG"
