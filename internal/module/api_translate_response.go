@@ -192,6 +192,7 @@ type chatToResponsesTranslator struct {
 type responseTranslationState struct {
 	started          bool
 	completed        bool
+	sawDone          bool
 	outputIndex      int
 	currentType      string
 	messageID        string
@@ -230,7 +231,9 @@ func (t *chatToResponsesTranslator) Read(p []byte) (int, error) {
 			if processErr := t.processRaw(nil, true); processErr != nil {
 				return 0, processErr
 			}
-			t.complete()
+			if !t.done {
+				t.completeOnEOF()
+			}
 			t.done = true
 			break
 		}
@@ -259,12 +262,27 @@ func (t *chatToResponsesTranslator) processRaw(chunk []byte, eof bool) error {
 	}
 	for _, event := range events {
 		if event.Done {
+			t.state.sawDone = true
 			t.complete()
 			t.done = true
 			return nil
 		}
 		if event.Data == "" {
 			continue
+		}
+		if event.Event == "error" {
+			t.failFromRaw(event.Data)
+			t.done = true
+			return nil
+		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(event.Data), &payload); err != nil {
+			continue
+		}
+		if errorValue, ok := payload["error"]; ok {
+			t.failFromErrorValue(errorValue)
+			t.done = true
+			return nil
 		}
 		var chunk chatCompletionChunk
 		if err := json.Unmarshal([]byte(event.Data), &chunk); err != nil {
@@ -312,6 +330,9 @@ func (t *chatToResponsesTranslator) processChunk(chunk chatCompletionChunk) {
 	if chunk.Model != "" {
 		t.state.model = chunk.Model
 	}
+	if !chunkHasSignal(chunk) {
+		return
+	}
 	t.ensureStarted()
 
 	for _, choice := range chunk.Choices {
@@ -325,6 +346,15 @@ func (t *chatToResponsesTranslator) processChunk(chunk chatCompletionChunk) {
 			t.emitToolCallDelta(toolCall)
 		}
 	}
+}
+
+func chunkHasSignal(chunk chatCompletionChunk) bool {
+	for _, choice := range chunk.Choices {
+		if choice.FinishReason != nil || choice.Delta.Content != "" || len(choice.Delta.ToolCalls) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (t *chatToResponsesTranslator) ensureStarted() {
@@ -494,9 +524,99 @@ func (t *chatToResponsesTranslator) complete() {
 	if t.state.finishReason == "length" || t.state.finishReason == "content_filter" {
 		status = "incomplete"
 	}
-	t.writeResponseEvent("response.completed", map[string]any{
-		"response": t.baseResponse(status),
-	})
+	response := t.baseResponse(status)
+	if status == "incomplete" {
+		response["incomplete_details"] = map[string]any{"reason": "max_output_tokens"}
+	}
+	t.writeResponseEvent("response.completed", map[string]any{"response": response})
+	t.state.completed = true
+}
+
+func (t *chatToResponsesTranslator) completeOnEOF() {
+	if t.state.completed {
+		return
+	}
+	if t.state.sawDone || t.state.finishReason != "" {
+		t.complete()
+		return
+	}
+	if t.hasSubstantiveOutput() {
+		t.state.finishReason = "length"
+		t.complete()
+		return
+	}
+	t.fail("Upstream Chat Completions stream ended before sending finish_reason", "stream_truncated")
+}
+
+func (t *chatToResponsesTranslator) hasSubstantiveOutput() bool {
+	return t.state.text.Len() > 0 ||
+		len(t.state.output) > 0 ||
+		t.state.messageID != "" ||
+		t.state.callItemID != "" ||
+		t.state.callID != "" ||
+		t.state.callName != "" ||
+		t.state.callArguments.Len() > 0
+}
+
+func (t *chatToResponsesTranslator) failFromRaw(raw string) {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		t.fail(raw, "stream_error")
+		return
+	}
+	t.failFromErrorValue(payload["error"])
+}
+
+func (t *chatToResponsesTranslator) failFromErrorValue(errorValue any) {
+	message, errorType := extractErrorDetails(errorValue)
+	t.fail(message, errorType)
+}
+
+func extractErrorDetails(errorValue any) (string, string) {
+	switch value := errorValue.(type) {
+	case string:
+		if value == "" {
+			return "stream error", "stream_error"
+		}
+		return value, "stream_error"
+	case map[string]any:
+		message, _ := value["message"].(string)
+		if message == "" {
+			message, _ = value["detail"].(string)
+		}
+		errorType, _ := value["type"].(string)
+		if errorType == "" {
+			errorType, _ = value["code"].(string)
+		}
+		if message == "" {
+			encoded, _ := json.Marshal(value)
+			message = string(encoded)
+		}
+		if errorType == "" {
+			errorType = "stream_error"
+		}
+		return message, errorType
+	default:
+		return "stream error", "stream_error"
+	}
+}
+
+func (t *chatToResponsesTranslator) fail(message string, errorType string) {
+	if t.state.completed {
+		return
+	}
+	if message == "" {
+		message = "stream error"
+	}
+	if errorType == "" {
+		errorType = "stream_error"
+	}
+	response := t.baseResponse("failed")
+	response["error"] = map[string]any{
+		"message": message,
+		"type":    errorType,
+	}
+	t.writeResponseEvent("response.failed", map[string]any{"response": response})
 	t.state.completed = true
 }
 
@@ -515,6 +635,8 @@ func (t *chatToResponsesTranslator) baseResponse(status string) map[string]any {
 }
 
 func (t *chatToResponsesTranslator) writeResponseEvent(eventType string, data map[string]any) {
+	data = cloneEventPayload(data)
+	data["type"] = eventType
 	encoded, err := json.Marshal(data)
 	if err != nil {
 		return
@@ -525,6 +647,14 @@ func (t *chatToResponsesTranslator) writeResponseEvent(eventType string, data ma
 	t.buf.WriteString("data: ")
 	t.buf.Write(encoded)
 	t.buf.WriteString("\n\n")
+}
+
+func cloneEventPayload(data map[string]any) map[string]any {
+	cloned := make(map[string]any, len(data)+1)
+	for key, value := range data {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 var _ io.ReadCloser = (*chatToResponsesTranslator)(nil)

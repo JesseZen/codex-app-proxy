@@ -490,9 +490,10 @@ func (m *Manager) LogSink(name string) *logging.WorkerLogSink {
 	logDir := m.config.Defaults.LogDir
 	m.mu.RUnlock()
 
-	if logDir == "" || logDir == "~/.codex-proxy/logs" {
-		logDir = filepath.Join(os.TempDir(), "codex-proxy-logs")
+	if logDir == "" {
+		logDir = "~/.codex-proxy/logs"
 	}
+	logDir = expandHomePath(logDir)
 	sink, err := logging.NewWorkerLogSink(filepath.Join(logDir, fmt.Sprintf("worker-%d.log", worker.Port)), 1000)
 	if err != nil {
 		sink, _ = logging.NewWorkerLogSink(filepath.Join(os.TempDir(), fmt.Sprintf("codex-proxy-worker-%d.log", worker.Port)), 1000)
