@@ -39,3 +39,7 @@
 ## 版本
 
 19. 版本号由 git tag 驱动，构建时通过 `git describe --tags` 注入。切换 channel：`gh workflow run bump.yml -f channel=beta`
+
+## 调试
+
+20. Worker 日志默认在 `~/.codex-proxy/logs/worker-<port>.log`，可通过 `defaults.log_dir` 配置
