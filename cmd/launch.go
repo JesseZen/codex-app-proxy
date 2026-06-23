@@ -113,12 +113,24 @@ func runLaunch(args []string, stdout io.Writer, stderr io.Writer) int {
 		return runHostedTerminalLaunch(cfg.Settings, opts, *profile, *sessionID, *sessionLabel, stdout, stderr, *noAttach)
 	}
 
-	runner := launchRunnerFactory(stdout, stderr)
-	if _, err := runner.Run(cmd); err != nil {
+	if err := runTerminalLaunchCommand(cmd, stdout, stderr); err != nil {
 		fmt.Fprintf(stderr, "failed to launch: %v\n", err)
 		return 1
 	}
 	return 0
+}
+
+func runTerminalLaunchCommand(cmd []string, stdout io.Writer, stderr io.Writer) error {
+	if stdout == os.Stdout && stderr == os.Stderr {
+		proc := exec.Command(cmd[0], cmd[1:]...)
+		proc.Stdout = os.Stdout
+		proc.Stderr = os.Stderr
+		proc.Stdin = os.Stdin
+		return proc.Run()
+	}
+	runner := launchRunnerFactory(stdout, stderr)
+	_, err := runner.Run(cmd)
+	return err
 }
 
 // runHostedTerminalLaunch runs the Codex CLI inside a CAP-owned tmux host.

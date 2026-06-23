@@ -72,6 +72,35 @@ func TestRunLaunchExplicitExternalWindowMode(t *testing.T) {
 	}
 }
 
+func TestRunLaunchExternalWindowUsesDirectExecWithTerminalStreams(t *testing.T) {
+	dir := t.TempDir()
+	codexPath := filepath.Join(dir, "codex")
+	if err := os.WriteFile(codexPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	called := false
+	restore := func() func() {
+		previous := launchRunnerFactory
+		launchRunnerFactory = func(stdout io.Writer, stderr io.Writer) launchRunner {
+			called = true
+			return launchRunnerFunc(func(args []string) (string, error) {
+				return "", nil
+			})
+		}
+		return func() { launchRunnerFactory = previous }
+	}()
+	defer restore()
+
+	if code := runLaunch([]string{"--worker", "11199", "--mode", "external-window"}, os.Stdout, os.Stderr); code != 0 {
+		t.Fatalf("expected success, got %d", code)
+	}
+	if called {
+		t.Fatal("expected direct exec path, not launchRunnerFactory")
+	}
+}
+
 func TestRunLaunchRejectsInvalidMode(t *testing.T) {
 	var stderr bytes.Buffer
 	code := runLaunch([]string{"--worker", "11199", "--mode", "bogus"}, &bytes.Buffer{}, &stderr)

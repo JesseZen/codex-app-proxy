@@ -78,7 +78,7 @@ export function Home() {
         <box height={4} minHeight={0} flexShrink={1} />
         <box flexShrink={0}>
           <pluginRuntime.Slot name="home_logo" mode="replace">
-            <Logo style={logoStyle()} idle sweep />
+            <Logo style={logoStyle()} />
           </pluginRuntime.Slot>
         </box>
         <box height={1} minHeight={0} flexShrink={1} />
