@@ -89,6 +89,24 @@ func TmuxAttachCommandForSettings(settings config.Settings) []string {
 	return append(tmuxPrefixForSettings(settings), "attach-session", "-t", tmuxHostSessionForSettings(settings))
 }
 
+// TmuxShowMouseCommand returns the argv that reads the CAP host mouse setting.
+func TmuxShowMouseCommand() []string {
+	return TmuxShowMouseCommandForSettings(defaultTmuxSettings())
+}
+
+func TmuxShowMouseCommandForSettings(settings config.Settings) []string {
+	return append(tmuxPrefixForSettings(settings), "show", "-gv", "mouse")
+}
+
+// TmuxEnableMouseCommand returns the argv that enables mouse support in the CAP host.
+func TmuxEnableMouseCommand() []string {
+	return TmuxEnableMouseCommandForSettings(defaultTmuxSettings())
+}
+
+func TmuxEnableMouseCommandForSettings(settings config.Settings) []string {
+	return append(tmuxPrefixForSettings(settings), "set-option", "-g", "mouse", "on")
+}
+
 // SafeWindowName generates a tmux-safe window name from a session identifier.
 // Non-alphanumeric characters (except `-` and `_`) are replaced with `-` so the
 // name can be used unambiguously in tmux targets like `cap-host:<window>`.

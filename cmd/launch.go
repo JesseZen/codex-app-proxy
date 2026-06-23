@@ -154,6 +154,18 @@ func runHostedTerminalLaunch(settings config.Settings, opts manager.CodexLaunchO
 		}
 	}
 
+	mouse, err := runner.Run(manager.TmuxShowMouseCommandForSettings(settings))
+	if err != nil {
+		fmt.Fprintf(stderr, "failed to inspect tmux mouse setting: %v\n", err)
+		return 1
+	}
+	if strings.TrimSpace(mouse) != "on" {
+		if _, err := runner.Run(manager.TmuxEnableMouseCommandForSettings(settings)); err != nil {
+			fmt.Fprintf(stderr, "failed to enable tmux mouse support: %v\n", err)
+			return 1
+		}
+	}
+
 	registry := manager.NewHostedSessionRegistry(manager.HostedSessionRegistryPath(settings.StateDir))
 	if sessionID != "" {
 		session, ok, err := registry.Get(sessionID)
