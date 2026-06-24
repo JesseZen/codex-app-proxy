@@ -1,9 +1,13 @@
-import { expect, test } from "bun:test"
+import { afterEach, expect, mock, test } from "bun:test"
 import { Global } from "@codex-proxy/core/global"
 import { homedir } from "node:os"
 import path from "node:path"
 import { createProxyLaunchCommand, renderProxyLaunchCommand } from "../src/proxy/launch"
 import { defaultWorker, directory, json, mountHostedTerminalApp, wait } from "./proxy-hosted-terminal.fixture"
+
+afterEach(() => {
+  mock.restore()
+})
 
 test("Global.Path.config defaults to ~/.codex-proxy", () => {
   expect(Global.Path.config).toBe(path.join(homedir(), ".codex-proxy"))
@@ -49,6 +53,68 @@ test("renderProxyLaunchCommand quotes hosted-terminal mode", () => {
   const cmd = createProxyLaunchCommand({ workerPort: 1234, profile: "cli", mode: "hosted-terminal" })
   const rendered = renderProxyLaunchCommand(cmd)
   expect(rendered).toContain("'--mode' 'hosted-terminal'")
+})
+
+test("launchHostedTerminal reuses existing macOS terminal window when tmux already has a client", async () => {
+  const spawns: Array<{ cmd: string; args: string[] }> = []
+
+  mock.module("node:os", () => ({
+    platform: () => "darwin",
+  }))
+  mock.module("node:child_process", () => ({
+    spawn(cmd: string, args: string[]) {
+      spawns.push({ cmd, args })
+      let onStdoutData: ((chunk: Buffer) => void) | undefined
+      const child = {
+        stdout: {
+          on(event: string, handler: (data: Buffer) => void) {
+            if (event === "data") onStdoutData = handler
+          },
+        },
+        stderr: { on() {} },
+        on(event: string, handler: (code?: number) => void) {
+          if (event === "exit") {
+            queueMicrotask(() => {
+              if (cmd === "tmux" && args[2] === "list-clients") onStdoutData?.(Buffer.from("/dev/ttys001: cap-host\n"))
+              handler(0)
+            })
+          }
+          return child
+        },
+        unref() {},
+      }
+      return child
+    },
+  }))
+
+  const launchModule = await import(`../src/proxy/launch?reuse-existing-client=${Date.now()}`)
+  const launched = await launchModule.launchProxySession({
+    executable: "codex-proxy",
+    workerPort: 1234,
+    profile: "cli",
+    configDir: "/tmp/codex-config",
+    mode: "hosted-terminal",
+    sessionID: "hs_1",
+    opener: "default",
+    tmuxSocketName: "cap",
+    tmuxHostSession: "cap-host",
+  })
+
+  expect(launched).toBe(true)
+  expect(spawns).toEqual([
+    {
+      cmd: "codex-proxy",
+      args: ["launch", "--worker", "1234", "--mode", "hosted-terminal", "--no-attach", "--profile", "cli", "--config-dir", "/tmp/codex-config", "--session-id", "hs_1"],
+    },
+    {
+      cmd: "tmux",
+      args: ["-L", "cap", "list-clients", "-t", "cap-host"],
+    },
+    {
+      cmd: "osascript",
+      args: ["-e", 'tell application "Terminal" to activate'],
+    },
+  ])
 })
 
 test("launch dialog prompts for mode before worker selection", async () => {

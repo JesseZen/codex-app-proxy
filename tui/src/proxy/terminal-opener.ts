@@ -8,6 +8,11 @@ type TerminalOpenCommandInput = {
   command: string
 }
 
+type TerminalActivateCommandInput = {
+  platform: NodeJS.Platform
+  opener: string
+}
+
 export function createTerminalOpenCommand(input: TerminalOpenCommandInput) {
   const opener = input.opener || "default"
   if (input.platform === "darwin") {
@@ -39,4 +44,13 @@ end tell`,
     default:
       return ["x-terminal-emulator", "-e", input.command]
   }
+}
+
+export function createTerminalActivateCommand(input: TerminalActivateCommandInput) {
+  const opener = input.opener || "default"
+  if (input.platform !== "darwin") return undefined
+  if (opener === "iterm2") {
+    return ["osascript", "-e", 'tell application "iTerm2" to activate']
+  }
+  return ["osascript", "-e", 'tell application "Terminal" to activate']
 }

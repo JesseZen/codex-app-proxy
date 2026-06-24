@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process"
 import { platform } from "node:os"
-import { createTerminalOpenCommand } from "./terminal-opener"
+import { createTerminalActivateCommand, createTerminalOpenCommand } from "./terminal-opener"
 
 export type LaunchMode = "external-window" | "hosted-terminal"
 
@@ -64,6 +64,12 @@ function runProcess(cmd: string, args: string[]): Promise<{ code: number; stdout
     child.on("error", () => resolve({ code: 1, stdout, stderr: stderr || `failed to spawn ${cmd}` }))
     child.on("exit", (code) => resolve({ code: code ?? 1, stdout, stderr }))
   })
+}
+
+async function hasTmuxClient(socketName: string, hostSession: string) {
+  const result = await runProcess("tmux", ["-L", socketName, "list-clients", "-t", hostSession])
+  if (result.code !== 0) return false
+  return result.stdout.trim() !== ""
 }
 
 export async function launchProxySession(opts: ProxyLaunchOptions) {
@@ -140,6 +146,20 @@ async function launchHostedTerminal(opts: ProxyLaunchOptions) {
   const setup = await runProcess(executable, setupArgs)
   if (setup.code !== 0) {
     throw new Error(setup.stderr || `codex-proxy launch exited with code ${setup.code}`)
+  }
+
+  if (await hasTmuxClient(tmuxSocket, tmuxHostSession)) {
+    const activateCommand = createTerminalActivateCommand({
+      platform: platform(),
+      opener: opts.opener || "default",
+    })
+    if (!activateCommand) return true
+    const child = spawn(activateCommand[0], activateCommand.slice(1), {
+      detached: true,
+      stdio: "ignore",
+    })
+    child.unref()
+    return true
   }
 
   const attachCommand = `tmux -L ${tmuxSocket} attach-session -t ${tmuxHostSession}`
