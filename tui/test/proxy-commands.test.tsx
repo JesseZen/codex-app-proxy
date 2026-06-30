@@ -280,6 +280,100 @@ test("proxy launch registers a launch command", async () => {
   }
 })
 
+test("proxy topology command is registered and opens topology dialog", async () => {
+  const app = await mountProxyApp()
+
+  try {
+    const commands = app.api.keymap.getCommandEntries({
+      namespace: "palette",
+      visibility: "registered",
+    })
+    expect(commands.map((entry) => entry.command.name).includes("proxy.topology")).toBe(true)
+
+    app.api.keymap.dispatchCommand("proxy.topology")
+    await app.render()
+    expect(app.frame()).toContain("Topology")
+  } finally {
+    await app.cleanup()
+  }
+})
+
+test("topology dialog click on worker navigates to worker status", async () => {
+  const app = await mountProxyApp()
+
+  try {
+    app.api.keymap.dispatchCommand("proxy.topology")
+    await app.render()
+    await app.render()
+
+    await app.setup.mockMouse.click(5, 13)
+    await app.render()
+    await app.render()
+
+    const frame = app.frame()
+    expect(frame).toContain("app (:6767)")
+    expect(frame).toContain("Worker actions")
+  } finally {
+    await app.cleanup()
+  }
+})
+
+test("topology dialog click on upstream navigates to upstream editor", async () => {
+  const app = await mountProxyApp()
+
+  try {
+    app.api.keymap.dispatchCommand("proxy.topology")
+    await app.render()
+    await app.render()
+
+    await app.setup.mockMouse.click(13, 9)
+    await app.render()
+    await app.render()
+
+    const frame = app.frame()
+    expect(frame).toContain("Edit Upstream")
+    expect(frame).toContain("openai")
+  } finally {
+    await app.cleanup()
+  }
+})
+
+test("topology dialog drag worker to upstream calls patchWorker", async () => {
+  const app = await mountProxyApp()
+
+  try {
+    app.api.keymap.dispatchCommand("proxy.topology")
+    await app.render()
+    await app.render()
+
+    await app.setup.mockMouse.drag(5, 13, 38, 9)
+    await app.render()
+    await app.render()
+
+    expect(app.calls.patchWorker).toContainEqual({ port: 6767, upstream: "anthropic", log_level: "simple" })
+  } finally {
+    await app.cleanup()
+  }
+})
+
+test("topology dialog drag upstream to worker calls patchWorker", async () => {
+  const app = await mountProxyApp()
+
+  try {
+    app.api.keymap.dispatchCommand("proxy.topology")
+    await app.render()
+    await app.render()
+
+    await app.setup.mockMouse.drag(38, 9, 5, 13)
+    await app.render()
+    await app.render()
+
+    expect(app.calls.patchWorker).toContainEqual({ port: 6767, upstream: "anthropic", log_level: "simple" })
+  } finally {
+    await app.cleanup()
+  }
+})
+
 test("proxy workers editor patches log_level field", async () => {
   const app = await mountProxyApp()
 

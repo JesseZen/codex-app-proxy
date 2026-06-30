@@ -10,7 +10,7 @@ import { useToast } from "../ui/toast"
 type UpstreamOption = { type: "create" } | { type: "edit"; name: string }
 type FieldKey = "base_url" | "api_key" | "api_format"
 
-type Draft = {
+export type Draft = {
   base_url: string
   api_key: string
   api_format: string
@@ -83,7 +83,7 @@ export function DialogUpstream() {
   )
 }
 
-function DialogUpstreamEditor(props: { name: string; draft: Draft; mode: "created" | "saved" }) {
+export function DialogUpstreamEditor(props: { name: string; draft: Draft; mode: "created" | "saved" }) {
   const sync = useSync()
   const sdk = useSDK()
   const dialog = useDialog()

@@ -1,6 +1,7 @@
 import type { TuiPluginApi } from "@agent-inn/plugin/tui"
 import { DialogSettings } from "./dialog-settings"
 import { DialogLogs } from "./dialog-logs"
+import { DialogTopology } from "./dialog-topology"
 import { DialogUpstream } from "./dialog-upstream"
 import { DialogWorkerPicker } from "./dialog-worker-picker"
 import { DialogWorkers } from "./dialog-workers"
@@ -69,6 +70,16 @@ export function registerProxyCommands(api: TuiPluginApi) {
         slashName: "launch",
         run() {
           api.ui.dialog.replace(() => <DialogLaunch />)
+        },
+      },
+      {
+        namespace: "palette",
+        name: "proxy.topology",
+        title: "View topology",
+        category: "Proxy",
+        slashName: "topology",
+        run() {
+          api.ui.dialog.replace(() => <DialogTopology />)
         },
       },
     ],
