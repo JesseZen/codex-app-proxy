@@ -166,6 +166,11 @@ func runHostedTerminalLaunch(settings config.Settings, opts manager.CodexLaunchO
 		}
 	}
 
+	if _, err := runner.Run(manager.TmuxThemeCommandForSettings(settings)); err != nil {
+		fmt.Fprintf(stderr, "failed to apply tmux theme: %v\n", err)
+		return 1
+	}
+
 	registry := manager.NewHostedSessionRegistry(manager.HostedSessionRegistryPath(settings.StateDir))
 	if sessionID != "" {
 		session, ok, err := registry.Get(sessionID)

@@ -107,6 +107,25 @@ func TmuxEnableMouseCommandForSettings(settings config.Settings) []string {
 	return append(tmuxPrefixForSettings(settings), "set-option", "-g", "mouse", "on")
 }
 
+// TmuxThemeCommandForSettings returns the argv that injects a browser-tab-like
+// status bar theme into the AINN host session. Options use -g (global) because
+// the -L ainn private tmux server is isolated from the user's main tmux, so
+// global here means "ainn server only". Global window options are inherited by
+// every window including newly created ones, so new tabs pick up the theme
+// without re-injection. This mirrors the existing mouse setting which also
+// uses -g.
+func TmuxThemeCommandForSettings(settings config.Settings) []string {
+	return append(tmuxPrefixForSettings(settings),
+		"set-option", "-g", "status", "on", ";",
+		"set-option", "-g", "status-left", "", ";",
+		"set-option", "-g", "status-right", "", ";",
+		"set-option", "-g", "status-style", "fg=colour244,bg=colour235", ";",
+		"set-window-option", "-g", "window-status-format", "#[fg=colour244,bg=colour235] #I:#W #[default]", ";",
+		"set-window-option", "-g", "window-status-current-format", "#[fg=colour0,bg=colour45,bold] #I:#W #[default]", ";",
+		"set-window-option", "-g", "automatic-rename", "off",
+	)
+}
+
 // SafeWindowName generates a tmux-safe window name from a session identifier.
 // Non-alphanumeric characters (except `-` and `_`) are replaced with `-` so the
 // name can be used unambiguously in tmux targets like `ainn-host:<window>`.
