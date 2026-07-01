@@ -17,6 +17,7 @@ import (
 
 	"github.com/jesse/agent-inn/internal/constants"
 	"github.com/jesse/agent-inn/internal/module"
+	"github.com/jesse/agent-inn/internal/modulehook"
 	appruntime "github.com/jesse/agent-inn/internal/runtime"
 	"github.com/jesse/agent-inn/internal/upstream"
 	"github.com/jesse/agent-inn/internal/worker"
@@ -27,21 +28,20 @@ func runWorker(args []string, stdout io.Writer, stderr io.Writer) int {
 }
 
 type WorkerRuntimeConfig struct {
-	ID         appruntime.WorkerID            `json:"id,omitempty"`
-	Generation appruntime.Generation          `json:"generation,omitempty"`
-	ListenPort int                            `json:"listen_port,omitempty"`
-	Port       int                            `json:"port,omitempty"`
-	Role       appruntime.WorkerRole          `json:"role,omitempty"`
-	LogLevel   appruntime.LogLevel            `json:"log_level,omitempty"`
-	Upstream   appruntime.UpstreamRuntime     `json:"upstream"`
-	Modules    map[string]module.ModuleConfig `json:"modules,omitempty"`
+	ID         appruntime.WorkerID                 `json:"id,omitempty"`
+	Generation appruntime.Generation               `json:"generation,omitempty"`
+	ListenPort int                                 `json:"listen_port,omitempty"`
+	Port       int                                 `json:"port,omitempty"`
+	Role       appruntime.WorkerRole               `json:"role,omitempty"`
+	LogLevel   appruntime.LogLevel                 `json:"log_level,omitempty"`
+	Upstream   appruntime.UpstreamRuntime          `json:"upstream"`
+	Plugins    map[string]appruntime.PluginRuntime `json:"plugins,omitempty"`
+	Modules    map[string]module.ModuleConfig      `json:"modules,omitempty"`
+	Hooks      map[string]module.ModuleConfig      `json:"hooks,omitempty"`
 }
 
-type workerPatch interface {
-	Start() error
-	Stop() error
-	State() module.ConfigPatchState
-	Detail() map[string]string
+type workerHookStatusRefresher interface {
+	RefreshStatus() error
 }
 
 type workerServer interface {
@@ -56,9 +56,6 @@ var workerRunner = func(cfg WorkerRuntimeConfig) error {
 }
 
 var (
-	buildWorkerPatch = func(cfg WorkerRuntimeConfig) (workerPatch, bool) {
-		return buildConfigPatch(cfg)
-	}
 	newWorkerServer = func(addr string, w *worker.Worker) workerServer {
 		return worker.NewServer(addr, w)
 	}
@@ -66,7 +63,24 @@ var (
 )
 
 func runWorkerServer(cfg WorkerRuntimeConfig, stdin *os.File) error {
-	modules := buildModules(cfg.Modules, string(cfg.Upstream.APIFormat))
+	externalRequest := map[string]module.ExternalRequestRuntime{}
+	for name, plugin := range cfg.Plugins {
+		if plugin.Source == "external" && plugin.Kind == "request_middleware" {
+			externalRequest[name] = module.ExternalRequestRuntime{
+				Command:         plugin.Command,
+				Args:            append([]string(nil), plugin.Args...),
+				ProtocolVersion: plugin.ProtocolVersion,
+			}
+		}
+	}
+	modules, requestStates, err := module.BuildRequestMiddlewares(cfg.Modules, module.BuildDependencies{
+		APIFormat:       string(cfg.Upstream.APIFormat),
+		Stderr:          os.Stderr,
+		ExternalRequest: externalRequest,
+	})
+	if err != nil {
+		return err
+	}
 	generation := int(cfg.Generation)
 	if generation == 0 {
 		generation = 1
@@ -83,21 +97,63 @@ func runWorkerServer(cfg WorkerRuntimeConfig, stdin *os.File) error {
 			APIKey:    cfg.Upstream.APIKey,
 			APIFormat: string(cfg.Upstream.APIFormat),
 		},
-		CompiledUpstream: mustCompileUpstream(cfg.Upstream),
-		Modules:          modules,
+		RequestModuleConfigs: module.CloneModuleConfigs(cfg.Modules),
+		RequestModuleStates:  requestStates,
+		HookConfigs:          module.CloneModuleConfigs(cfg.Hooks),
+		Plugins:              cfg.Plugins,
+		Modules:              modules,
 	}
-	var patch workerPatch
-	if candidate, enabled := buildWorkerPatch(cfg); enabled {
-		patch = candidate
-		if err := patch.Start(); err != nil {
+	compiledUpstream, err := upstream.Compile(cfg.Upstream)
+	if err != nil {
+		return err
+	}
+	snapshot.CompiledUpstream = compiledUpstream
+	externalHooks := map[string]modulehook.ExternalHookRuntime{}
+	for name, plugin := range cfg.Plugins {
+		if plugin.Source == "external" && plugin.Kind == "lifecycle_hook" {
+			externalHooks[name] = modulehook.ExternalHookRuntime{
+				Command:         plugin.Command,
+				Args:            append([]string(nil), plugin.Args...),
+				ProtocolVersion: plugin.ProtocolVersion,
+			}
+		}
+	}
+	hooks, err := modulehook.Build(cfg.Hooks, modulehook.BuildDependencies{
+		WorkerID:      string(cfg.ID),
+		WorkerPort:    workerPort(cfg),
+		ExternalHooks: externalHooks,
+	})
+	if err != nil {
+		return err
+	}
+	startedHooks := []modulehook.Hook{}
+	if len(hooks) > 0 {
+		snapshot.HookStatuses = map[string]modulehook.Status{}
+	}
+	for _, hook := range hooks {
+		if err := hook.Start(); err != nil {
+			for i := len(startedHooks) - 1; i >= 0; i-- {
+				_ = startedHooks[i].Stop()
+			}
 			return err
 		}
-		snapshot.ConfigPatchState = patch.State()
-		snapshot.ConfigPatchDetail = patch.Detail()
+		startedHooks = append(startedHooks, hook)
+		if refresher, ok := hook.(workerHookStatusRefresher); ok {
+			if err := refresher.RefreshStatus(); err != nil {
+				for i := len(startedHooks) - 1; i >= 0; i-- {
+					_ = startedHooks[i].Stop()
+				}
+				return err
+			}
+		}
+		snapshot.HookStatuses[hook.Name()] = modulehook.Status{State: hook.State(), Detail: hook.Detail()}
 	}
-	w := worker.New(worker.Options{Snapshot: snapshot})
+	w, err := worker.New(worker.Options{Snapshot: snapshot})
+	if err != nil {
+		return err
+	}
 	server := newWorkerServer(constants.LocalhostAddr+":"+strconv.Itoa(port), w)
-	shutdown := newWorkerShutdown(server, patch, workerShutdownTimeout)
+	shutdown := newWorkerShutdown(server, startedHooks, workerShutdownTimeout)
 	server.InstallOrphanWatcher(stdin, shutdown)
 	stopSignals := make(chan os.Signal, 1)
 	signal.Notify(stopSignals, syscall.SIGINT, syscall.SIGTERM)
@@ -106,27 +162,19 @@ func runWorkerServer(cfg WorkerRuntimeConfig, stdin *os.File) error {
 		<-stopSignals
 		shutdown()
 	}()
-	err := server.ListenAndServe()
+	err = server.ListenAndServe()
 	if err == nil || err == http.ErrServerClosed {
 		return nil
 	}
 	return err
 }
 
-func mustCompileUpstream(runtime appruntime.UpstreamRuntime) upstream.Compiled {
-	compiled, err := upstream.Compile(runtime)
-	if err != nil {
-		panic(err)
-	}
-	return compiled
-}
-
-func newWorkerShutdown(server workerServer, patch workerPatch, timeout time.Duration) func() {
+func newWorkerShutdown(server workerServer, hooks []modulehook.Hook, timeout time.Duration) func() {
 	var once sync.Once
 	return func() {
 		once.Do(func() {
-			if patch != nil {
-				_ = patch.Stop()
+			for i := len(hooks) - 1; i >= 0; i-- {
+				_ = hooks[i].Stop()
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
@@ -144,58 +192,21 @@ func SetWorkerRunnerForTest(runner func(WorkerRuntimeConfig) error) func() {
 }
 
 func buildModules(configs map[string]module.ModuleConfig, apiFormat string) []module.Middleware {
-	names := []string{"image_filter", "debug_sse", "api_translate", "model_override", "request_log"}
-	modules := make([]module.Middleware, 0, len(names))
-	for _, name := range names {
-		cfg := configs[name]
-		if cfg.Params == nil {
-			cfg.Params = map[string]any{}
-		}
-		if name == "api_translate" && cfg.Params["api_format"] == nil {
-			cfg.Params["api_format"] = apiFormat
-		}
-		switch name {
-		case "image_filter":
-			modules = append(modules, module.NewImageFilter(cfg))
-		case "api_translate":
-			modules = append(modules, module.NewAPITranslate(cfg))
-		case "model_override":
-			modules = append(modules, module.NewModelOverride(cfg))
-		case "request_log":
-			modules = append(modules, module.NewRequestLog(cfg, os.Stderr))
-		case "debug_sse":
-			modules = append(modules, module.NewDebugSSE(cfg, os.Stderr))
-		}
+	modules, _, err := module.BuildRequestMiddlewares(configs, module.BuildDependencies{
+		APIFormat: apiFormat,
+		Stderr:    os.Stderr,
+	})
+	if err != nil {
+		panic(err)
 	}
 	return modules
 }
 
-func buildConfigPatch(cfg WorkerRuntimeConfig) (*module.ConfigPatch, bool) {
-	moduleCfg, ok := cfg.Modules["config_patch"]
-	if !ok || !moduleCfg.Enabled {
-		return nil, false
+func workerPort(cfg WorkerRuntimeConfig) int {
+	if cfg.ListenPort != 0 {
+		return cfg.ListenPort
 	}
-	configPath, _ := moduleCfg.Params["config_path"].(string)
-	if configPath == "" {
-		configPath = "~/.codex/config.toml"
-	}
-	configPath = expandHome(configPath)
-	stateDir, _ := moduleCfg.Params["state_dir"].(string)
-	if stateDir == "" {
-		stateDir = "~/.ainn"
-	}
-	stateDir = expandHome(stateDir)
-	port := cfg.ListenPort
-	if port == 0 {
-		port = cfg.Port
-	}
-	return module.NewConfigPatch(module.ConfigPatchOptions{
-		StateDir:    stateDir,
-		ConfigPath:  configPath,
-		WorkerID:    string(cfg.ID),
-		WorkerPort:  port,
-		PatchedBase: fmt.Sprintf("http://%s:%d", constants.LocalhostAddr, port),
-	}), true
+	return cfg.Port
 }
 
 func runWorkerWithFD(args []string, stdout io.Writer, stderr io.Writer, files map[int]*os.File) int {

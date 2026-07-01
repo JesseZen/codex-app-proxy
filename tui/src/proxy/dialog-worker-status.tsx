@@ -21,6 +21,16 @@ export function DialogWorkerStatus(props: { worker: WorkerSummary; management?: 
   const sync = useSync()
   const toast = useToast()
   const modules = createMemo(() => Object.entries(props.worker.modules ?? {}))
+  const hooks = createMemo(() => Object.entries(props.worker.hooks ?? {}))
+  const hookStatusSummary = createMemo(() =>
+    hooks()
+      .map(([name]) => {
+        const state = props.worker.hook_statuses?.[name]?.state
+        return state ? `${name}: ${state}` : ""
+      })
+      .filter(Boolean)
+      .join(" • "),
+  )
 
   const logLevelAction: DialogSelectOption<string> = {
     title: "Log Level",
@@ -77,7 +87,7 @@ export function DialogWorkerStatus(props: { worker: WorkerSummary; management?: 
   const modulesAction: DialogSelectOption<string> = {
       title: "Manage Modules",
       value: "modules",
-      description: `${modules().length}`,
+      description: `${modules().length} req • ${hooks().length} hook`,
       onSelect: () => dialog.replace(() => <DialogModulePicker worker={props.worker} />),
   }
 
@@ -151,17 +161,30 @@ export function DialogWorkerStatus(props: { worker: WorkerSummary; management?: 
       placeholder="Worker actions..."
       footer={
         <box flexDirection="column" gap={1}>
-          <text fg={theme.textMuted}>status: {props.worker.status}</text>
+          <text fg={theme.textMuted}>status: {props.worker.status}{hookStatusSummary() ? ` • ${hookStatusSummary()}` : ""}</text>
           <text fg={theme.textMuted}>upstream: {props.worker.upstream.name}</text>
-          <text fg={theme.textMuted}>log level: {props.worker.log_level} • modules: {modules().length}</text>
+          <text fg={theme.textMuted}>log level: {props.worker.log_level} • modules: {modules().length} req • {hooks().length} hook</text>
           <text fg={theme.textMuted}>snapshot: {props.worker.snapshot_generation}</text>
           <Show when={modules().length > 0} fallback={<text fg={theme.textMuted}>modules: none</text>}>
             <box flexDirection="column">
               <text fg={theme.text} attributes={TextAttributes.BOLD}>
-                modules
+                request middleware
               </text>
               <For each={modules()}>
                 {([name, config]) => <text fg={theme.textMuted}>{config.enabled ? "✓" : "○"} {name}</text>}
+              </For>
+            </box>
+          </Show>
+          <Show when={hooks().length > 0} fallback={<text fg={theme.textMuted}>lifecycle hooks: none</text>}>
+            <box flexDirection="column">
+              <text fg={theme.text} attributes={TextAttributes.BOLD}>
+                lifecycle hooks
+              </text>
+              <For each={hooks()}>
+                {([name, config]) => {
+                  const state = props.worker.hook_statuses?.[name]?.state
+                  return <text fg={theme.textMuted}>{config.enabled ? "✓" : "○"} {name}{state ? `: ${state}` : ""}</text>
+                }}
               </For>
             </box>
           </Show>

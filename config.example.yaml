@@ -9,53 +9,32 @@ settings:
         tmux:
             socket_name: ainn
             host_session: ainn-host
+plugins:
+    api_translate:
+        kind: request_middleware
+        source: builtin
+    image_filter:
+        kind: request_middleware
+        source: builtin
+    config_patch:
+        kind: lifecycle_hook
+        source: builtin
 workers:
-    cli-groq:
-        port: 11200
-        upstream: groq
-        log_level: simple
-        modules:
-            api_translate:
-                enabled: true
-            image_filter:
-                enabled: false
-    cli-openrouter:
-        port: 11199
-        upstream: openrouter
-        log_level: simple
-        modules:
-            api_translate:
-                enabled: true
-            image_filter:
-                enabled: true
     codex-app:
         port: 6767
         upstream: joycode
         log_level: simple
-        modules:
+        request_modules:
             api_translate:
                 enabled: true
+            image_filter:
+                enabled: true
+        hooks:
             config_patch:
                 enabled: true
                 config_path: ~/.codex/config.toml
-            image_filter:
-                enabled: true
 upstreams:
-    custom:
-        base_url: ""
-        api_key: ""
-    groq:
-        base_url: https://api.groq.com/openai/v1
-        api_key: sk-...
-        api_format: chat_completions
     joycode:
         base_url: https://api.joycode.dev/v1
-        api_key: sk-...
-        api_format: chat_completions
-    openai:
-        base_url: https://api.openai.com/v1
-        api_key: sk-...
-    openrouter:
-        base_url: https://openrouter.ai/api/v1
         api_key: sk-...
         api_format: chat_completions

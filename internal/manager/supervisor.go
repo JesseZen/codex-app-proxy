@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/jesse/agent-inn/internal/logging"
+	"github.com/jesse/agent-inn/internal/modulehook"
 )
 
 type WorkerSupervisor struct {
@@ -14,8 +15,7 @@ type WorkerSupervisor struct {
 	retries           int
 	healthySince      time.Time
 	logSink           *logging.WorkerLogSink
-	configPatchState  string
-	configPatchDetail map[string]string
+	hookStatuses      map[string]modulehook.Status
 	lastError         string
 }
 
@@ -88,35 +88,18 @@ func (s *WorkerSupervisor) HealthySince() time.Time {
 	return s.healthySince
 }
 
-func (s *WorkerSupervisor) setConfigPatchStatus(state string, detail map[string]string) {
-	s.configPatchState = state
-	if len(detail) == 0 {
-		s.configPatchDetail = nil
-		return
+func (s *WorkerSupervisor) setHookStatus(name string, status modulehook.Status) {
+	if s.hookStatuses == nil {
+		s.hookStatuses = map[string]modulehook.Status{}
 	}
-	cloned := make(map[string]string, len(detail))
-	for key, value := range detail {
-		cloned[key] = value
-	}
-	s.configPatchDetail = cloned
+	s.hookStatuses[name] = cloneHookStatus(status)
 }
 
-func (s *WorkerSupervisor) ConfigPatchState() string {
-	if s == nil {
-		return ""
-	}
-	return s.configPatchState
-}
-
-func (s *WorkerSupervisor) ConfigPatchDetail() map[string]string {
-	if s == nil || len(s.configPatchDetail) == 0 {
+func (s *WorkerSupervisor) HookStatuses() map[string]modulehook.Status {
+	if s == nil || len(s.hookStatuses) == 0 {
 		return nil
 	}
-	out := make(map[string]string, len(s.configPatchDetail))
-	for key, value := range s.configPatchDetail {
-		out[key] = value
-	}
-	return out
+	return cloneHookStatuses(s.hookStatuses)
 }
 
 func (s *WorkerSupervisor) setLastError(err string) {

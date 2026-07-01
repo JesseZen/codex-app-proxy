@@ -6,6 +6,7 @@ import { batch, onCleanup, onMount } from "solid-js"
 import type {
   HostedSessionRecord,
   HostedSessionSummary,
+  ProxyConfig,
   ProxyConfigResponse,
   ProxyConfigStatus,
   ProxySettings,
@@ -20,7 +21,16 @@ export type EventSource = {
   subscribe: (handler: (event: GlobalEvent) => void) => Promise<() => void>
 }
 
-export type { ProxyConfigStatus, ProxySettings, ProxySettingsResponse, RedactedUpstream, UpstreamProbeResult, WorkerDetail, WorkerSummary }
+export type {
+  ProxyConfig,
+  ProxyConfigStatus,
+  ProxySettings,
+  ProxySettingsResponse,
+  RedactedUpstream,
+  UpstreamProbeResult,
+  WorkerDetail,
+  WorkerSummary,
+}
 
 export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
   name: "SDK",
@@ -69,7 +79,8 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
           patch: Partial<{
             port: number
             upstream: string
-            modules: WorkerDetail["modules"]
+            request_modules: WorkerDetail["modules"]
+            hooks: WorkerDetail["hooks"]
             log_level: string
           }>,
         ) {
@@ -80,7 +91,14 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
             body: JSON.stringify({
               port: patch.port ?? current.port,
               upstream: patch.upstream ?? current.upstream.name,
-              modules: patch.modules ?? current.modules ?? {},
+              request_modules: {
+                ...(current.modules ?? {}),
+                ...(patch.request_modules ?? {}),
+              },
+              hooks: {
+                ...(current.hooks ?? {}),
+                ...(patch.hooks ?? {}),
+              },
               log_level: patch.log_level ?? current.log_level,
             }),
           })

@@ -9,9 +9,7 @@ afterEach(() => {
   process.env.VISUAL = visual
 })
 
-test("rejects when the external editor cannot start", async () => {
-  delete process.env.VISUAL
-  process.env.EDITOR = "ainn-editor-that-does-not-exist"
+test("rejects when the external editor exits unsuccessfully", async () => {
   const renderer = {
     suspend() {},
     resume() {},
@@ -19,7 +17,16 @@ test("rejects when the external editor cannot start", async () => {
     currentRenderBuffer: { clear() {} },
   }
 
-  await expect(openEditor({ value: "original", renderer: renderer as never })).rejects.toThrow()
+  await expect(
+    openEditor({
+      value: "original",
+      renderer: renderer as never,
+      editor: "test-editor",
+      runEditor: async () => {
+        throw new Error("editor failed")
+      },
+    }),
+  ).rejects.toThrow("editor failed")
 })
 
 test("normalizes a single trailing editor newline for one-line prompts", () => {

@@ -1,22 +1,18 @@
-package module
+package modulehook
 
 import (
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jesse/agent-inn/internal/module"
 )
 
 func TestConfigPatchNormalRestore(t *testing.T) {
 	dir := t.TempDir()
 	configPath := writeCodexConfig(t, dir, `base_url = "https://example.com/v1"`)
-	patch := NewConfigPatch(ConfigPatchOptions{
-		StateDir:    filepath.Join(dir, "state"),
-		ConfigPath:  configPath,
-		WorkerID:    "worker-6767",
-		WorkerPort:  6767,
-		PatchedBase: "http://127.0.0.1:6767",
-	})
+	patch := newTestConfigPatch(configPath, filepath.Join(dir, "state"), "worker-6767", 6767)
 
 	if err := patch.Start(); err != nil {
 		t.Fatal(err)
@@ -38,13 +34,7 @@ func TestConfigPatchNormalRestore(t *testing.T) {
 func TestConfigPatchRecoversStaleJournal(t *testing.T) {
 	dir := t.TempDir()
 	configPath := writeCodexConfig(t, dir, `base_url = "https://example.com/v1"`)
-	first := NewConfigPatch(ConfigPatchOptions{
-		StateDir:    filepath.Join(dir, "state"),
-		ConfigPath:  configPath,
-		WorkerID:    "worker-6767",
-		WorkerPort:  6767,
-		PatchedBase: "http://127.0.0.1:6767",
-	})
+	first := newTestConfigPatch(configPath, filepath.Join(dir, "state"), "worker-6767", 6767)
 	if err := first.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -52,13 +42,7 @@ func TestConfigPatchRecoversStaleJournal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	second := NewConfigPatch(ConfigPatchOptions{
-		StateDir:    filepath.Join(dir, "state"),
-		ConfigPath:  configPath,
-		WorkerID:    "worker-6767",
-		WorkerPort:  6767,
-		PatchedBase: "http://127.0.0.1:6767",
-	})
+	second := newTestConfigPatch(configPath, filepath.Join(dir, "state"), "worker-6767", 6767)
 	if err := second.RecoverStaleJournal(); err != nil {
 		t.Fatal(err)
 	}
@@ -71,13 +55,7 @@ func TestConfigPatchRecoversStaleJournal(t *testing.T) {
 func TestConfigPatchManualEditConflictIsUnresolved(t *testing.T) {
 	dir := t.TempDir()
 	configPath := writeCodexConfig(t, dir, `base_url = "https://example.com/v1"`)
-	first := NewConfigPatch(ConfigPatchOptions{
-		StateDir:    filepath.Join(dir, "state"),
-		ConfigPath:  configPath,
-		WorkerID:    "worker-6767",
-		WorkerPort:  6767,
-		PatchedBase: "http://127.0.0.1:6767",
-	})
+	first := newTestConfigPatch(configPath, filepath.Join(dir, "state"), "worker-6767", 6767)
 	if err := first.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -88,13 +66,7 @@ func TestConfigPatchManualEditConflictIsUnresolved(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	second := NewConfigPatch(ConfigPatchOptions{
-		StateDir:    filepath.Join(dir, "state"),
-		ConfigPath:  configPath,
-		WorkerID:    "worker-6767",
-		WorkerPort:  6767,
-		PatchedBase: "http://127.0.0.1:6767",
-	})
+	second := newTestConfigPatch(configPath, filepath.Join(dir, "state"), "worker-6767", 6767)
 	if err := second.RecoverStaleJournal(); err != nil {
 		t.Fatal(err)
 	}
@@ -114,13 +86,7 @@ func TestConfigPatchManualEditConflictIsUnresolved(t *testing.T) {
 func TestConfigPatchStartStopsAfterUnresolvedRecovery(t *testing.T) {
 	dir := t.TempDir()
 	configPath := writeCodexConfig(t, dir, `base_url = "https://example.com/v1"`)
-	first := NewConfigPatch(ConfigPatchOptions{
-		StateDir:    filepath.Join(dir, "state"),
-		ConfigPath:  configPath,
-		WorkerID:    "worker-6767",
-		WorkerPort:  6767,
-		PatchedBase: "http://127.0.0.1:6767",
-	})
+	first := newTestConfigPatch(configPath, filepath.Join(dir, "state"), "worker-6767", 6767)
 	if err := first.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -131,13 +97,7 @@ func TestConfigPatchStartStopsAfterUnresolvedRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	second := NewConfigPatch(ConfigPatchOptions{
-		StateDir:    filepath.Join(dir, "state"),
-		ConfigPath:  configPath,
-		WorkerID:    "worker-6767",
-		WorkerPort:  6767,
-		PatchedBase: "http://127.0.0.1:6767",
-	})
+	second := newTestConfigPatch(configPath, filepath.Join(dir, "state"), "worker-6767", 6767)
 	if err := second.Start(); err == nil {
 		t.Fatal("expected Start to stop on unresolved recovery")
 	}
@@ -151,25 +111,13 @@ func TestConfigPatchStartStopsAfterUnresolvedRecovery(t *testing.T) {
 func TestConfigPatchLockPreventsSecondActivePatch(t *testing.T) {
 	dir := t.TempDir()
 	configPath := writeCodexConfig(t, dir, `base_url = "https://example.com/v1"`)
-	first := NewConfigPatch(ConfigPatchOptions{
-		StateDir:    filepath.Join(dir, "state"),
-		ConfigPath:  configPath,
-		WorkerID:    "worker-6767",
-		WorkerPort:  6767,
-		PatchedBase: "http://127.0.0.1:6767",
-	})
+	first := newTestConfigPatch(configPath, filepath.Join(dir, "state"), "worker-6767", 6767)
 	if err := first.Start(); err != nil {
 		t.Fatal(err)
 	}
 	defer first.Stop()
 
-	second := NewConfigPatch(ConfigPatchOptions{
-		StateDir:    filepath.Join(dir, "state"),
-		ConfigPath:  configPath,
-		WorkerID:    "worker-11199",
-		WorkerPort:  11199,
-		PatchedBase: "http://127.0.0.1:11199",
-	})
+	second := newTestConfigPatch(configPath, filepath.Join(dir, "state"), "worker-11199", 11199)
 	if err := second.Start(); err == nil {
 		t.Fatal("expected second patch to fail while lock is held")
 	}
@@ -182,6 +130,19 @@ func writeCodexConfig(t *testing.T, dir string, baseURLLine string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func newTestConfigPatch(configPath string, stateDir string, workerID string, workerPort int) *ConfigPatch {
+	return NewConfigPatch(module.ModuleConfig{
+		Enabled: true,
+		Params: map[string]any{
+			"config_path": configPath,
+			"state_dir":   stateDir,
+		},
+	}, BuildDependencies{
+		WorkerID:   workerID,
+		WorkerPort: workerPort,
+	})
 }
 
 func codexConfigText(baseURLLine string) string {

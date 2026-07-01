@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/jesse/agent-inn/internal/config"
+	"github.com/jesse/agent-inn/internal/modulehook"
 	"github.com/jesse/agent-inn/internal/upstream"
 )
 
@@ -37,10 +38,11 @@ func (m *Manager) handleWorkers(rw http.ResponseWriter, r *http.Request) {
 
 func (m *Manager) handleCreateWorker(rw http.ResponseWriter, r *http.Request) {
 	var payload struct {
-		Name     string                         `json:"name"`
-		Port     int                            `json:"port"`
-		Upstream string                         `json:"upstream"`
-		Modules  map[string]config.ModuleConfig `json:"modules"`
+		Name           string                         `json:"name"`
+		Port           int                            `json:"port"`
+		Upstream       string                         `json:"upstream"`
+		RequestModules map[string]config.ModuleConfig `json:"request_modules"`
+		Hooks          map[string]config.ModuleConfig `json:"hooks"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		writeJSON(rw, http.StatusBadRequest, map[string]any{"error": "invalid JSON"})
@@ -73,12 +75,20 @@ func (m *Manager) handleCreateWorker(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worker := config.WorkerConfig{
-		Port:     payload.Port,
-		Upstream: payload.Upstream,
-		Modules:  payload.Modules,
+		Port:           payload.Port,
+		Upstream:       payload.Upstream,
+		RequestModules: payload.RequestModules,
+		Hooks:          payload.Hooks,
 	}
-	if worker.Modules == nil {
-		worker.Modules = map[string]config.ModuleConfig{}
+	if worker.RequestModules == nil {
+		worker.RequestModules = map[string]config.ModuleConfig{}
+	}
+	if worker.Hooks == nil {
+		worker.Hooks = map[string]config.ModuleConfig{}
+	}
+	if err := m.validateWorkerRuntime(payload.Name, worker); err != nil {
+		writeJSON(rw, http.StatusBadRequest, map[string]any{"error": redactedErrorMessage(err)})
+		return
 	}
 	m.updateConfig(func(cfgRoot *config.Config) {
 		cfgRoot.Workers[payload.Name] = worker
@@ -237,8 +247,11 @@ func (m *Manager) handleWorkerByPort(rw http.ResponseWriter, r *http.Request) {
 			writeJSON(rw, http.StatusBadRequest, map[string]any{"error": "worker provider is required"})
 			return
 		}
-		if next.Modules == nil {
-			next.Modules = map[string]config.ModuleConfig{}
+		if next.RequestModules == nil {
+			next.RequestModules = map[string]config.ModuleConfig{}
+		}
+		if next.Hooks == nil {
+			next.Hooks = map[string]config.ModuleConfig{}
 		}
 		if next.LogLevel == "" {
 			next.LogLevel = "simple"
@@ -256,6 +269,10 @@ func (m *Manager) handleWorkerByPort(rw http.ResponseWriter, r *http.Request) {
 				writeJSON(rw, http.StatusConflict, map[string]any{"error": redactedErrorMessage(err)})
 				return
 			}
+		}
+		if err := m.validateWorkerRuntime(workerName, next); err != nil {
+			writeJSON(rw, http.StatusBadRequest, map[string]any{"error": redactedErrorMessage(err)})
+			return
 		}
 		if err := m.UpdateWorker(workerName, current, next); err != nil {
 			writeJSON(rw, http.StatusInternalServerError, map[string]any{"error": redactedErrorMessage(err)})
@@ -333,11 +350,52 @@ func (m *Manager) handleWorkerByPort(rw http.ResponseWriter, r *http.Request) {
 			writeJSON(rw, http.StatusBadRequest, map[string]any{"error": "invalid JSON"})
 			return
 		}
-		if worker.Modules == nil {
-			worker.Modules = map[string]config.ModuleConfig{}
+		if worker.RequestModules == nil {
+			worker.RequestModules = map[string]config.ModuleConfig{}
+		}
+		if worker.Hooks == nil {
+			worker.Hooks = map[string]config.ModuleConfig{}
+		}
+		definition, ok := m.pluginDefinition(moduleName)
+		if !ok {
+			writeJSON(rw, http.StatusBadRequest, map[string]any{"error": fmt.Sprintf("plugin %q is not defined", moduleName)})
+			return
+		}
+		if definition.Kind == config.PluginKindLifecycleHook {
+			if cfg.Enabled {
+				if err := m.validateConfigPatchEnablePolicy(workerName, moduleName); err != nil {
+					writeJSON(rw, http.StatusConflict, map[string]any{"error": redactedErrorMessage(err)})
+					return
+				}
+			}
+			m.updateConfig(func(cfgRoot *config.Config) {
+				worker.Hooks[moduleName] = cfg
+				cfgRoot.Workers[workerName] = worker
+			})
+			if m.workerStatus(workerName) == WorkerStateRunning {
+				if err := m.RestartWorker(workerName); err != nil {
+					writeJSON(rw, http.StatusInternalServerError, map[string]any{"error": redactedErrorMessage(err)})
+					return
+				}
+			}
+			m.publishEvent(EventModuleUpdated, map[string]any{"worker": workerName, "port": port, "module": moduleName, "enabled": cfg.Enabled, "params": cfg.Params})
+			writeJSON(rw, http.StatusOK, map[string]any{
+				"worker": workerName,
+				"port":   port,
+				"module": map[string]any{
+					"name":    moduleName,
+					"enabled": cfg.Enabled,
+					"params":  cfg.Params,
+				},
+			})
+			return
+		}
+		if definition.Kind != config.PluginKindRequestMiddleware {
+			writeJSON(rw, http.StatusBadRequest, map[string]any{"error": fmt.Sprintf("plugin %q has invalid kind %q", moduleName, definition.Kind)})
+			return
 		}
 		if cfg.Enabled {
-			if err := m.validateConfigPatchOwner(workerName, moduleName); err != nil {
+			if err := m.validateConfigPatchEnablePolicy(workerName, moduleName); err != nil {
 				writeJSON(rw, http.StatusConflict, map[string]any{"error": redactedErrorMessage(err)})
 				return
 			}
@@ -347,7 +405,7 @@ func (m *Manager) handleWorkerByPort(rw http.ResponseWriter, r *http.Request) {
 			return
 		}
 		m.updateConfig(func(cfgRoot *config.Config) {
-			worker.Modules[moduleName] = cfg
+			worker.RequestModules[moduleName] = cfg
 			cfgRoot.Workers[workerName] = worker
 		})
 		if m.workerStatus(workerName) == WorkerStateRunning {
@@ -380,13 +438,55 @@ func (m *Manager) handleWorkerByPort(rw http.ResponseWriter, r *http.Request) {
 		http.NotFound(rw, r)
 		return
 	}
-	if worker.Modules == nil {
-		worker.Modules = map[string]config.ModuleConfig{}
+	if worker.RequestModules == nil {
+		worker.RequestModules = map[string]config.ModuleConfig{}
 	}
-	cfg := worker.Modules[moduleName]
+	if worker.Hooks == nil {
+		worker.Hooks = map[string]config.ModuleConfig{}
+	}
+	definition, ok := m.pluginDefinition(moduleName)
+	if !ok {
+		writeJSON(rw, http.StatusBadRequest, map[string]any{"error": fmt.Sprintf("plugin %q is not defined", moduleName)})
+		return
+	}
+	if definition.Kind == config.PluginKindLifecycleHook {
+		cfg := worker.Hooks[moduleName]
+		cfg.Enabled = !cfg.Enabled
+		if cfg.Enabled {
+			if err := m.validateConfigPatchEnablePolicy(workerName, moduleName); err != nil {
+				writeJSON(rw, http.StatusConflict, map[string]any{"error": redactedErrorMessage(err)})
+				return
+			}
+		}
+		m.updateConfig(func(cfgRoot *config.Config) {
+			worker.Hooks[moduleName] = cfg
+			cfgRoot.Workers[workerName] = worker
+		})
+		if m.workerStatus(workerName) == WorkerStateRunning {
+			if err := m.RestartWorker(workerName); err != nil {
+				writeJSON(rw, http.StatusInternalServerError, map[string]any{"error": redactedErrorMessage(err)})
+				return
+			}
+		}
+		m.publishEvent(EventModuleUpdated, map[string]any{"worker": workerName, "port": port, "module": moduleName, "enabled": cfg.Enabled, "params": cfg.Params})
+		writeJSON(rw, http.StatusOK, map[string]any{
+			"worker": workerName,
+			"port":   port,
+			"module": map[string]any{
+				"name":    moduleName,
+				"enabled": cfg.Enabled,
+			},
+		})
+		return
+	}
+	if definition.Kind != config.PluginKindRequestMiddleware {
+		writeJSON(rw, http.StatusBadRequest, map[string]any{"error": fmt.Sprintf("plugin %q has invalid kind %q", moduleName, definition.Kind)})
+		return
+	}
+	cfg := worker.RequestModules[moduleName]
 	cfg.Enabled = !cfg.Enabled
 	if cfg.Enabled {
-		if err := m.validateConfigPatchOwner(workerName, moduleName); err != nil {
+		if err := m.validateConfigPatchEnablePolicy(workerName, moduleName); err != nil {
 			writeJSON(rw, http.StatusConflict, map[string]any{"error": redactedErrorMessage(err)})
 			return
 		}
@@ -396,7 +496,7 @@ func (m *Manager) handleWorkerByPort(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.updateConfig(func(cfgRoot *config.Config) {
-		worker.Modules[moduleName] = cfg
+		worker.RequestModules[moduleName] = cfg
 		cfgRoot.Workers[workerName] = worker
 	})
 	if m.workerStatus(workerName) == WorkerStateRunning {
@@ -413,8 +513,8 @@ func (m *Manager) handleWorkerByPort(rw http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (m *Manager) validateConfigPatchOwner(workerName string, moduleName string) error {
-	if moduleName != "config_patch" {
+func (m *Manager) validateConfigPatchEnablePolicy(workerName string, moduleName string) error {
+	if moduleName != modulehook.ConfigPatchName {
 		return nil
 	}
 	if err := m.validateConfigPatchRecoveryState(workerName); err != nil {
@@ -426,16 +526,23 @@ func (m *Manager) validateConfigPatchOwner(workerName string, moduleName string)
 		if otherName == workerName || m.workerStatusLocked(otherName) != WorkerStateRunning {
 			continue
 		}
-		if worker.Modules["config_patch"].Enabled {
+		if worker.Hooks[modulehook.ConfigPatchName].Enabled {
 			return configPatchAlreadyActiveError{}
 		}
 	}
 	return nil
 }
 
+func (m *Manager) pluginDefinition(name string) (config.PluginDefinition, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	definition, ok := m.config.Plugins[name]
+	return definition, ok
+}
+
 func (m *Manager) validateConfigPatchRecoveryState(workerName string) error {
 	switch state := m.configPatchState(workerName); state {
-	case "unresolved", "failed":
+	case modulehook.ConfigPatchUnresolved, modulehook.ConfigPatchFailed:
 		return configPatchRecoveryStateError{state: state}
 	}
 	worker, ok := m.workerConfig(workerName)
@@ -450,9 +557,9 @@ func (m *Manager) validateConfigPatchRecoveryState(workerName string) error {
 	if err != nil {
 		return nil
 	}
-	switch status.ConfigPatchState {
-	case "unresolved", "failed":
-		return configPatchRecoveryStateError{state: status.ConfigPatchState}
+	switch state := status.HookStatuses[modulehook.ConfigPatchName].State; state {
+	case modulehook.ConfigPatchUnresolved, modulehook.ConfigPatchFailed:
+		return configPatchRecoveryStateError{state: state}
 	default:
 		return nil
 	}

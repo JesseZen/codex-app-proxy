@@ -25,23 +25,60 @@ const MODULE_FIELDS: Record<string, ModuleField[]> = {
 
 export function DialogModulePicker(props: { worker: WorkerSummary }) {
   const sdk = useSDK()
+  const sync = useSync()
   const dialog = useDialog()
-  const options = createMemo<DialogSelectOption<string>[]>(() =>
-    Object.entries(props.worker.modules ?? {}).map(([name, cfg]) => ({
-      title: `${cfg.enabled ? "✓" : "○"} ${name}`,
-      value: name,
-      description: describeModule(name, cfg.params ?? {}),
-      category: cfg.enabled ? "Enabled" : "Disabled",
-      onSelect: async () => {
-        const worker = await sdk.client.getWorker(props.worker.port)
-        dialog.push(() => <DialogModuleEditor worker={worker} moduleName={name} />)
-      },
-    })),
-  )
+  const options = createMemo<DialogSelectOption<string>[]>(() => {
+    const plugins = sync.data.manager_config.plugins ?? {}
+    const configuredRequestModules = Object.entries(props.worker.modules ?? {}).filter(
+      ([name]) => plugins[name]?.kind === "request_middleware",
+    )
+    const configuredRequestNames = new Set(configuredRequestModules.map(([name]) => name))
+    const availableRequestModules = Object.entries(plugins)
+      .filter(([name, definition]) => definition.kind === "request_middleware" && !configuredRequestNames.has(name))
+      .map(([name]) => [name, { enabled: false }] as const)
+    const hooks = [
+      ...Object.entries(props.worker.hooks ?? {}).filter(([name]) => plugins[name]?.kind === "lifecycle_hook"),
+      ...Object.entries(plugins)
+        .filter(([name, definition]) => definition.kind === "lifecycle_hook" && props.worker.hooks?.[name] === undefined)
+        .map(([name]) => [name, { enabled: false }] as const),
+    ]
+    return [
+      ...configuredRequestModules.map(([name, cfg]) => ({
+        title: `${cfg.enabled ? "✓" : "○"} ${name}`,
+        value: name,
+        description: describeModule(name, cfg.params ?? {}),
+        category: "Request Middleware",
+        onSelect: async () => {
+          const worker = await sdk.client.getWorker(props.worker.port)
+          dialog.push(() => <DialogModuleEditor worker={worker} moduleName={name} />)
+        },
+      })),
+      ...availableRequestModules.map(([name, cfg]) => ({
+        title: `${cfg.enabled ? "✓" : "○"} ${name}`,
+        value: name,
+        description: describeModule(name, cfg.params ?? {}),
+        category: "Request Middleware",
+        onSelect: async () => {
+          const worker = await sdk.client.getWorker(props.worker.port)
+          dialog.push(() => <DialogModuleEditor worker={worker} moduleName={name} />)
+        },
+      })),
+      ...hooks.map(([name, cfg]) => ({
+        title: `${cfg.enabled ? "✓" : "○"} ${name}`,
+        value: name,
+        description: describeModule(name, cfg.params ?? {}),
+        category: "Lifecycle Hooks",
+        onSelect: async () => {
+          const worker = await sdk.client.getWorker(props.worker.port)
+          dialog.push(() => <DialogModuleEditor worker={worker} moduleName={name} />)
+        },
+      })),
+    ]
+  })
 
   return (
     <DialogSelect
-      title={`Modules: ${props.worker.name} (:${props.worker.port})`}
+      title={`Modules & Hooks: ${props.worker.name} (:${props.worker.port})`}
       options={options()}
       placeholder="Search modules..."
       footer={<EscHint dialog={dialog} />}
@@ -54,7 +91,7 @@ function DialogModuleEditor(props: { worker: WorkerDetail; moduleName: string })
   const sdk = useSDK()
   const sync = useSync()
   const toast = useToast()
-  const [draft, setDraft] = createSignal(props.worker.modules?.[props.moduleName] ?? { enabled: false })
+  const [draft, setDraft] = createSignal(props.worker.modules?.[props.moduleName] ?? props.worker.hooks?.[props.moduleName] ?? { enabled: false })
 
   const options = createMemo<DialogSelectOption<ModuleKey>[]>(() => {
     const cfg = draft()

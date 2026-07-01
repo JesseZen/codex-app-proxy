@@ -7,37 +7,31 @@ import (
 	appruntime "github.com/jesse/agent-inn/internal/runtime"
 )
 
-var runtimeModuleNames = []string{"image_filter", "api_translate", "model_override", "request_log", "debug_sse"}
-
-func buildRuntimeModules(configs map[string]appruntime.ModuleConfig, apiFormat appruntime.APIFormat) []module.Middleware {
-	modules := make([]module.Middleware, 0, len(runtimeModuleNames))
-	for _, name := range runtimeModuleNames {
-		runtimeCfg := configs[name]
-		cfg := module.ModuleConfig{Enabled: runtimeCfg.Enabled}
-		if runtimeCfg.Params != nil {
-			cfg.Params = make(map[string]any, len(runtimeCfg.Params))
-			for key, value := range runtimeCfg.Params {
-				cfg.Params[key] = value
+func buildRuntimeModules(configs map[string]module.ModuleConfig, plugins map[string]appruntime.PluginRuntime, apiFormat appruntime.APIFormat) ([]module.Middleware, map[string]module.ModuleConfig, error) {
+	externalRequest := map[string]module.ExternalRequestRuntime{}
+	for name, plugin := range plugins {
+		if plugin.Source == "external" && plugin.Kind == "request_middleware" {
+			externalRequest[name] = module.ExternalRequestRuntime{
+				Command:         plugin.Command,
+				Args:            append([]string(nil), plugin.Args...),
+				ProtocolVersion: plugin.ProtocolVersion,
 			}
 		}
-		if name == "api_translate" && cfg.Params == nil && apiFormat != "" {
-			cfg.Params = map[string]any{"api_format": string(apiFormat)}
-		}
-		if name == "api_translate" && cfg.Params != nil && cfg.Params["api_format"] == nil && apiFormat != "" {
-			cfg.Params["api_format"] = string(apiFormat)
-		}
-		switch name {
-		case "image_filter":
-			modules = append(modules, module.NewImageFilter(cfg))
-		case "api_translate":
-			modules = append(modules, module.NewAPITranslate(cfg))
-		case "model_override":
-			modules = append(modules, module.NewModelOverride(cfg))
-		case "request_log":
-			modules = append(modules, module.NewRequestLog(cfg, os.Stderr))
-		case "debug_sse":
-			modules = append(modules, module.NewDebugSSE(cfg, os.Stderr))
-		}
 	}
-	return modules
+	return module.BuildRequestMiddlewares(configs, module.BuildDependencies{
+		APIFormat:       string(apiFormat),
+		Stderr:          os.Stderr,
+		ExternalRequest: externalRequest,
+	})
+}
+
+func cloneRuntimeParams(params map[string]any) map[string]any {
+	if params == nil {
+		return nil
+	}
+	cloned := make(map[string]any, len(params))
+	for key, value := range params {
+		cloned[key] = value
+	}
+	return cloned
 }

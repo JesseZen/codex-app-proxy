@@ -140,6 +140,7 @@ func TestEventBusLiveSubscriberCannotMutateHistoricalReplay(t *testing.T) {
 func TestManagerPublishesWorkerLifecycleEvents(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
+			Plugins: testPluginDefinitions(),
 			Workers: map[string]config.WorkerConfig{
 				"app": {Port: 6767, Upstream: "openai"},
 			},
@@ -174,12 +175,16 @@ func TestManagerPublishesWorkerLifecycleEvents(t *testing.T) {
 func TestManagerPublishesWorkerUpdateEvents(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
+			Plugins: testPluginDefinitions(),
 			Workers: map[string]config.WorkerConfig{
 				"app": {
 					Port:     6767,
 					Upstream: "openai",
-					Modules: map[string]config.ModuleConfig{
+					RequestModules: map[string]config.ModuleConfig{
 						"api_translate": {Enabled: true, Params: map[string]any{"api_format": "responses"}},
+					},
+					Hooks: map[string]config.ModuleConfig{
+						"config_patch": {Enabled: true, Params: map[string]any{"config_path": "~/.codex/config.toml", "state_dir": "~/.ainn"}},
 					},
 				},
 			},
@@ -214,12 +219,20 @@ func TestManagerPublishesWorkerUpdateEvents(t *testing.T) {
 	if module := modules["api_translate"]; !module.Enabled || module.Params["api_format"] != "responses" {
 		t.Fatalf("worker update event has bad modules payload: %#v", modules)
 	}
+	hooks, ok := event.Payload["hooks"].(map[string]config.ModuleConfig)
+	if !ok {
+		t.Fatalf("worker update event missing hooks: %#v", event.Payload)
+	}
+	if hook := hooks["config_patch"]; !hook.Enabled || hook.Params["config_path"] != "~/.codex/config.toml" {
+		t.Fatalf("worker update event has bad hooks payload: %#v", hooks)
+	}
 }
 
 func TestManagerDoesNotPublishWorkerUpdatedForRolledBackPortChange(t *testing.T) {
 	starter := &recordingStarter{}
 	m := New(Config{
 		Config: config.Config{
+			Plugins: testPluginDefinitions(),
 			Workers: map[string]config.WorkerConfig{
 				"app": {Port: 6767, Upstream: "openai"},
 			},
@@ -270,8 +283,9 @@ func TestManagerPublishesModuleUpdatedAfterGenerationBump(t *testing.T) {
 	client := &recordingWorkerClient{}
 	m := New(Config{
 		Config: config.Config{
+			Plugins: testPluginDefinitions(),
 			Workers: map[string]config.WorkerConfig{
-				"app": {Port: 6767, Upstream: "openai", Modules: map[string]config.ModuleConfig{"api_translate": {Enabled: false}}},
+				"app": {Port: 6767, Upstream: "openai", RequestModules: map[string]config.ModuleConfig{"api_translate": {Enabled: false}}},
 			},
 			Upstreams: map[string]config.UpstreamProfile{
 				"openai": {BaseURL: "https://api.openai.com/v1"},
@@ -312,6 +326,7 @@ func TestManagerPublishesProviderUpdatedAfterGenerationBump(t *testing.T) {
 	client := &recordingWorkerClient{}
 	m := New(Config{
 		Config: config.Config{
+			Plugins: testPluginDefinitions(),
 			Workers: map[string]config.WorkerConfig{
 				"app": {Port: 6767, Upstream: "openai"},
 			},

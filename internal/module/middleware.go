@@ -38,23 +38,6 @@ type Middleware interface {
 	RequestBodyPlanner
 }
 
-func CloneMiddleware(m Middleware) Middleware {
-	switch typed := m.(type) {
-	case *ImageFilter:
-		return NewImageFilter(typed.Config())
-	case *APITranslate:
-		return NewAPITranslate(typed.Config())
-	case *ModelOverride:
-		return NewModelOverride(typed.Config())
-	case *RequestLog:
-		return NewRequestLog(typed.Config(), typed.writer)
-	case *DebugSSE:
-		return NewDebugSSE(typed.Config(), typed.writer)
-	default:
-		return m
-	}
-}
-
 type ProxyRequest struct {
 	Method       string
 	Path         string

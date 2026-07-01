@@ -22,6 +22,15 @@ type ModuleConfig struct {
 	Params  map[string]any `json:"params,omitempty"`
 }
 
+type PluginRuntime struct {
+	Kind            string   `json:"kind"`
+	Source          string   `json:"source"`
+	Path            string   `json:"path,omitempty"`
+	Command         string   `json:"command,omitempty"`
+	Args            []string `json:"args,omitempty"`
+	ProtocolVersion string   `json:"protocol_version,omitempty"`
+}
+
 type UpstreamRuntime struct {
 	ID        UpstreamID `json:"id"`
 	BaseURL   string     `json:"base_url"`
@@ -37,13 +46,15 @@ type UpstreamPublic struct {
 }
 
 type WorkerRuntime struct {
-	ID         WorkerID                `json:"id"`
-	Generation Generation              `json:"generation"`
-	ListenPort int                     `json:"listen_port"`
-	Role       WorkerRole              `json:"role,omitempty"`
-	LogLevel   LogLevel                `json:"log_level,omitempty"`
-	Upstream   UpstreamRuntime         `json:"upstream"`
-	Modules    map[string]ModuleConfig `json:"modules,omitempty"`
+	ID         WorkerID                 `json:"id"`
+	Generation Generation               `json:"generation"`
+	ListenPort int                      `json:"listen_port"`
+	Role       WorkerRole               `json:"role,omitempty"`
+	LogLevel   LogLevel                 `json:"log_level,omitempty"`
+	Upstream   UpstreamRuntime          `json:"upstream"`
+	Plugins    map[string]PluginRuntime `json:"plugins,omitempty"`
+	Modules    map[string]ModuleConfig  `json:"modules,omitempty"`
+	Hooks      map[string]ModuleConfig  `json:"hooks,omitempty"`
 }
 
 func (u UpstreamRuntime) Public() UpstreamPublic {

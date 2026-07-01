@@ -1,4 +1,4 @@
-package module
+package modulehook
 
 import (
 	"encoding/json"
@@ -9,17 +9,27 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/jesse/agent-inn/internal/constants"
+	"github.com/jesse/agent-inn/internal/module"
 )
 
-type ConfigPatchState string
+type ConfigPatchState = string
 
 const (
-	ConfigPatchClean      ConfigPatchState = "clean"
-	ConfigPatchActive     ConfigPatchState = "active"
+	ConfigPatchName                        = "config_patch"
+	ConfigPatchClean      ConfigPatchState = StateClean
+	ConfigPatchActive     ConfigPatchState = StateActive
 	ConfigPatchRecovered  ConfigPatchState = "recovered"
 	ConfigPatchUnresolved ConfigPatchState = "unresolved"
 	ConfigPatchFailed     ConfigPatchState = "failed"
 )
+
+type BuildDependencies struct {
+	WorkerID      string
+	WorkerPort    int
+	ExternalHooks map[string]ExternalHookRuntime
+}
 
 type ConfigPatchOptions struct {
 	StateDir    string
@@ -30,6 +40,7 @@ type ConfigPatchOptions struct {
 }
 
 type ConfigPatch struct {
+	config   module.ModuleConfig
 	options  ConfigPatchOptions
 	lockFile *os.File
 	state    ConfigPatchState
@@ -49,11 +60,33 @@ type configPatchJournal struct {
 	Timestamp      string `json:"timestamp"`
 }
 
-func NewConfigPatch(options ConfigPatchOptions) *ConfigPatch {
-	return &ConfigPatch{options: options, state: ConfigPatchClean}
+func NewConfigPatch(cfg module.ModuleConfig, deps BuildDependencies) *ConfigPatch {
+	config := module.CloneModuleConfig(cfg)
+	return &ConfigPatch{
+		config:  config,
+		options: optionsFromConfig(config, deps),
+		state:   ConfigPatchClean,
+	}
 }
 
-func (p *ConfigPatch) State() ConfigPatchState {
+func (p *ConfigPatch) Name() string {
+	return ConfigPatchName
+}
+
+func (p *ConfigPatch) Config() module.ModuleConfig {
+	return module.CloneModuleConfig(p.config)
+}
+
+func (p *ConfigPatch) UpdateConfig(cfg module.ModuleConfig) error {
+	p.config = module.CloneModuleConfig(cfg)
+	p.options = optionsFromConfig(p.config, BuildDependencies{
+		WorkerID:   p.options.WorkerID,
+		WorkerPort: p.options.WorkerPort,
+	})
+	return nil
+}
+
+func (p *ConfigPatch) State() string {
 	return p.state
 }
 
@@ -221,6 +254,33 @@ func (p *ConfigPatch) RecoverStaleJournal() error {
 
 func (p *ConfigPatch) CloseLockForTest() error {
 	return p.releaseLock()
+}
+
+func optionsFromConfig(cfg module.ModuleConfig, deps BuildDependencies) ConfigPatchOptions {
+	configPath, _ := cfg.Params["config_path"].(string)
+	if configPath == "" {
+		configPath = "~/.codex/config.toml"
+	}
+	stateDir, _ := cfg.Params["state_dir"].(string)
+	if stateDir == "" {
+		stateDir = "~/.ainn"
+	}
+	return ConfigPatchOptions{
+		StateDir:    expandHome(stateDir),
+		ConfigPath:  expandHome(configPath),
+		WorkerID:    deps.WorkerID,
+		WorkerPort:  deps.WorkerPort,
+		PatchedBase: fmt.Sprintf("http://%s:%d", constants.LocalhostAddr, deps.WorkerPort),
+	}
+}
+
+func expandHome(path string) string {
+	if len(path) >= 2 && path[:2] == "~/" {
+		if home, err := os.UserHomeDir(); err == nil {
+			return home + path[1:]
+		}
+	}
+	return path
 }
 
 func (p *ConfigPatch) acquireLock() error {

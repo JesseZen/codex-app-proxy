@@ -13,6 +13,7 @@ import {
   toAinnUpstreams,
   type ProxyConfigStatus,
   type ProxySettings,
+  type PluginDefinition,
   type RedactedUpstream,
   type WorkerSummary,
 } from "../src/proxy/backend"
@@ -66,7 +67,12 @@ function createProxyHarness() {
         modules: {
           model_override: { enabled: false, params: { model: "gpt-old" } },
           api_translate: { enabled: true, params: { api_format: "chat_completions" } },
-          request_log: { enabled: false },
+        },
+        hooks: {
+          config_patch: { enabled: true, params: { config_path: "~/.codex/config.toml", state_dir: "~/.ainn" } },
+        },
+        hook_statuses: {
+          config_patch: { state: "active", detail: { provider_name: "test" } },
         },
       },
     ],
@@ -88,6 +94,7 @@ function createProxyHarness() {
   const config: {
     status: ProxyConfigStatus
     settings: ProxySettings
+    plugins: Record<string, PluginDefinition>
   } = {
     status: {
       generation: 4,
@@ -106,6 +113,12 @@ function createProxyHarness() {
           host_session: "ainn-host",
         },
       },
+    },
+    plugins: {
+      api_translate: { kind: "request_middleware", source: "builtin" },
+      model_override: { kind: "request_middleware", source: "builtin" },
+      request_log: { kind: "request_middleware", source: "builtin" },
+      config_patch: { kind: "lifecycle_hook", source: "builtin" },
     },
   }
   const calls = {
@@ -159,7 +172,7 @@ function createProxyHarness() {
     if (url.pathname === "/api/config" && url.search === "") {
       if (url.href.includes("&__method=PUT")) return undefined
       return json({
-        config: {},
+        config: { plugins: config.plugins },
         status: config.status,
       })
     }
@@ -168,7 +181,7 @@ function createProxyHarness() {
     }
     if (url.pathname === "/api/config")
       return json({
-        config: {},
+        config: { plugins: config.plugins },
         status: config.status,
       })
     if (url.pathname === "/api/settings") {

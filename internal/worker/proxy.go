@@ -27,7 +27,7 @@ type Options struct {
 	Client   *http.Client
 }
 
-func New(opts Options) *Worker {
+func New(opts Options) (*Worker, error) {
 	client := opts.Client
 	if client == nil {
 		client = http.DefaultClient
@@ -37,14 +37,14 @@ func New(opts Options) *Worker {
 		var err error
 		snapshot, err = snapshotFromRuntime(opts.Runtime)
 		if err != nil {
-			panic(err)
+			return nil, err
 		}
 	}
 	snapshot = snapshot.withCompiledUpstream()
 	return &Worker{
 		snapshots: newSnapshotHolder(snapshot),
 		client:    client,
-	}
+	}, nil
 }
 
 func (w *Worker) UpdateRuntime(runtime appruntime.WorkerRuntime) (appruntime.Generation, error) {

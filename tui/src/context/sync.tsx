@@ -81,6 +81,7 @@ export const {
       workers: [],
       upstreams: [],
       upstreamProbes: {},
+      manager_config: {},
       config_status: undefined,
       error: undefined,
     })
@@ -124,6 +125,7 @@ export const {
       batch(() => {
         setStore("workers", reconcile(workers))
         setStore("upstreams", reconcile(upstreams))
+        setStore("manager_config", reconcile(config.config))
         setStore("config_status", reconcile(config.status))
         setStore("error", undefined)
       })
@@ -214,6 +216,7 @@ export const {
               setStore("config", reconcile(config))
               setStore("workers", reconcile(manager.workers))
               setStore("upstreams", reconcile(manager.upstreams))
+              setStore("manager_config", reconcile(manager.config.config))
               setStore("config_status", reconcile(manager.config.status))
               setStore("error", undefined)
               if (sessions !== undefined) setStore("session", reconcile(sessions))

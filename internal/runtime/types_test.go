@@ -20,8 +20,22 @@ func TestWorkerRuntimeJSONContract(t *testing.T) {
 			APIKey:    "sk-runtime",
 			APIFormat: APIFormatChatCompletions,
 		},
+		Plugins: map[string]PluginRuntime{
+			"external_filter": {
+				Kind:            "request_middleware",
+				Source:          "external",
+				Path:            "/tmp/plugin.yaml",
+				Command:         "/tmp/plugin",
+				Args:            []string{"--mode", "strict"},
+				ProtocolVersion: "1",
+			},
+		},
 		Modules: map[string]ModuleConfig{
-			"api_translate": {Enabled: true, Params: map[string]any{"api_format": "chat_completions"}},
+			"api_translate":   {Enabled: true, Params: map[string]any{"api_format": "chat_completions"}},
+			"external_filter": {Enabled: true},
+		},
+		Hooks: map[string]ModuleConfig{
+			"config_patch": {Enabled: true, Params: map[string]any{"config_path": "/tmp/codex-config.toml"}},
 		},
 	}
 

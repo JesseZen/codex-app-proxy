@@ -8,6 +8,7 @@ import (
 
 	"github.com/jesse/agent-inn/internal/constants"
 	"github.com/jesse/agent-inn/internal/module"
+	"github.com/jesse/agent-inn/internal/modulehook"
 	appruntime "github.com/jesse/agent-inn/internal/runtime"
 	"github.com/jesse/agent-inn/internal/upstream"
 )
@@ -45,13 +46,11 @@ func (w *Worker) writeStatus(rw http.ResponseWriter) {
 	status := map[string]any{
 		"snapshot_generation": snapshot.Generation,
 		"upstream":            snapshot.Upstream.Redacted(),
-		"modules":             moduleStates(snapshot.Modules),
+		"modules":             snapshot.requestModuleStates(),
+		"hooks":               snapshot.hookModules(),
 	}
-	if snapshot.ConfigPatchState != "" && snapshot.ConfigPatchState != module.ConfigPatchClean {
-		status["config_patch_state"] = snapshot.ConfigPatchState
-	}
-	if len(snapshot.ConfigPatchDetail) > 0 {
-		status["config_patch_detail"] = snapshot.ConfigPatchDetail
+	if len(snapshot.HookStatuses) > 0 {
+		status["hook_statuses"] = snapshot.HookStatuses
 	}
 	writeJSON(rw, http.StatusOK, status)
 }
@@ -86,9 +85,12 @@ func (w *Worker) handleSwitch(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	current := w.snapshots.Load()
-	next := current
+	next, err := current.withUpstream(payload.Upstream)
+	if err != nil {
+		writeJSON(rw, http.StatusBadRequest, map[string]any{"error": err.Error(), "snapshot_generation": current.Generation})
+		return
+	}
 	next.Generation = current.Generation + 1
-	next.Upstream = payload.Upstream
 	if err := next.Validate(); err != nil {
 		writeJSON(rw, http.StatusBadRequest, map[string]any{"error": err.Error(), "snapshot_generation": current.Generation})
 		return
@@ -109,30 +111,40 @@ func (w *Worker) handleModule(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	current := w.snapshots.Load()
-	index := -1
-	for i, middleware := range current.Modules {
-		if middleware.Name() == name {
-			index = i
-			break
+	if modulehook.IsLifecycleHook(name) {
+		cfg := current.hookModules()[name]
+		if action == "" && r.Method == http.MethodGet {
+			writeJSON(rw, http.StatusOK, cfg)
+			return
 		}
+		http.NotFound(rw, r)
+		return
 	}
-	if index == -1 {
+	plugin := current.Plugins[name]
+	if !module.IsRequestMiddleware(name) && !(plugin.Source == "external" && plugin.Kind == "request_middleware") {
+		http.NotFound(rw, r)
+		return
+	}
+	configs := current.requestModules()
+	if _, ok := configs[name]; !ok {
 		http.NotFound(rw, r)
 		return
 	}
 
 	if action == "" && r.Method == http.MethodGet {
-		writeJSON(rw, http.StatusOK, current.Modules[index].Config())
+		writeJSON(rw, http.StatusOK, current.requestModuleStates()[name])
 		return
 	}
 	if action == "" && r.Method == http.MethodPatch {
-		var cfg module.ModuleConfig
-		if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+		var nextCfg module.ModuleConfig
+		if err := json.NewDecoder(r.Body).Decode(&nextCfg); err != nil {
 			writeJSON(rw, http.StatusBadRequest, map[string]any{"error": "invalid JSON"})
 			return
 		}
-		next := cloneSnapshotWithModules(current)
-		if err := next.Modules[index].UpdateConfig(cfg); err != nil {
+		nextConfigs := current.requestModules()
+		nextConfigs[name] = module.CloneModuleConfig(nextCfg)
+		next, err := current.withRequestModuleConfigs(nextConfigs)
+		if err != nil {
 			writeJSON(rw, http.StatusBadRequest, map[string]any{"error": err.Error()})
 			return
 		}
@@ -140,15 +152,17 @@ func (w *Worker) handleModule(rw http.ResponseWriter, r *http.Request) {
 		w.snapshots.Store(next)
 		writeJSON(rw, http.StatusOK, map[string]any{
 			"snapshot_generation": next.Generation,
-			"module":              next.Modules[index].Config(),
+			"module":              next.requestModuleStates()[name],
 		})
 		return
 	}
 	if action == "toggle" && r.Method == http.MethodPost {
-		next := cloneSnapshotWithModules(current)
-		cfg := next.Modules[index].Config()
+		nextConfigs := current.requestModules()
+		cfg := nextConfigs[name]
 		cfg.Enabled = !cfg.Enabled
-		if err := next.Modules[index].UpdateConfig(cfg); err != nil {
+		nextConfigs[name] = cfg
+		next, err := current.withRequestModuleConfigs(nextConfigs)
+		if err != nil {
 			writeJSON(rw, http.StatusBadRequest, map[string]any{"error": err.Error()})
 			return
 		}
@@ -156,22 +170,11 @@ func (w *Worker) handleModule(rw http.ResponseWriter, r *http.Request) {
 		w.snapshots.Store(next)
 		writeJSON(rw, http.StatusOK, map[string]any{
 			"snapshot_generation": next.Generation,
-			"module":              next.Modules[index].Config(),
+			"module":              next.requestModuleStates()[name],
 		})
 		return
 	}
 	http.NotFound(rw, r)
-}
-
-func cloneSnapshotWithModules(snapshot RuntimeConfigSnapshot) RuntimeConfigSnapshot {
-	next := snapshot
-	if snapshot.Modules != nil {
-		next.Modules = make([]module.Middleware, len(snapshot.Modules))
-		for i, middleware := range snapshot.Modules {
-			next.Modules[i] = module.CloneMiddleware(middleware)
-		}
-	}
-	return next
 }
 
 func moduleStates(modules []module.Middleware) map[string]module.ModuleConfig {

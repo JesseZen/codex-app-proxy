@@ -8,9 +8,24 @@ const (
 )
 
 type Config struct {
-	Settings  Settings                   `yaml:"settings"`
-	Workers   map[string]WorkerConfig    `yaml:"workers"`
-	Upstreams map[string]UpstreamProfile `yaml:"upstreams"`
+	Settings  Settings                    `yaml:"settings"`
+	Plugins   map[string]PluginDefinition `yaml:"plugins" json:"plugins,omitempty"`
+	Workers   map[string]WorkerConfig     `yaml:"workers"`
+	Upstreams map[string]UpstreamProfile  `yaml:"upstreams"`
+}
+
+const (
+	PluginKindRequestMiddleware = "request_middleware"
+	PluginKindLifecycleHook     = "lifecycle_hook"
+
+	PluginSourceBuiltin  = "builtin"
+	PluginSourceExternal = "external"
+)
+
+type PluginDefinition struct {
+	Kind   string `yaml:"kind" json:"kind"`
+	Source string `yaml:"source" json:"source"`
+	Path   string `yaml:"path,omitempty" json:"path,omitempty"`
 }
 
 type Settings struct {
@@ -36,11 +51,12 @@ type TmuxSettings struct {
 }
 
 type WorkerConfig struct {
-	Role     string                  `yaml:"role,omitempty" json:"role,omitempty"`
-	Port     int                     `yaml:"port"`
-	Upstream string                  `yaml:"upstream"`
-	LogLevel string                  `yaml:"log_level,omitempty" json:"log_level,omitempty"`
-	Modules  map[string]ModuleConfig `yaml:"modules"`
+	Role           string                  `yaml:"role,omitempty" json:"role,omitempty"`
+	Port           int                     `yaml:"port"`
+	Upstream       string                  `yaml:"upstream"`
+	LogLevel       string                  `yaml:"log_level,omitempty" json:"log_level,omitempty"`
+	RequestModules map[string]ModuleConfig `yaml:"request_modules" json:"request_modules,omitempty"`
+	Hooks          map[string]ModuleConfig `yaml:"hooks" json:"hooks,omitempty"`
 }
 
 type ModuleConfig struct {
@@ -79,6 +95,9 @@ func (c *Config) ApplyDefaults() {
 	if c.Workers == nil {
 		c.Workers = map[string]WorkerConfig{}
 	}
+	if c.Plugins == nil {
+		c.Plugins = map[string]PluginDefinition{}
+	}
 	if c.Upstreams == nil {
 		c.Upstreams = map[string]UpstreamProfile{}
 	}
@@ -89,8 +108,11 @@ func (c *Config) ApplyDefaults() {
 		if worker.LogLevel == "" {
 			worker.LogLevel = "simple"
 		}
-		if worker.Modules == nil {
-			worker.Modules = map[string]ModuleConfig{}
+		if worker.RequestModules == nil {
+			worker.RequestModules = map[string]ModuleConfig{}
+		}
+		if worker.Hooks == nil {
+			worker.Hooks = map[string]ModuleConfig{}
 		}
 		c.Workers[name] = worker
 	}

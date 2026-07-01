@@ -8,12 +8,13 @@ import (
 	"testing"
 
 	"github.com/jesse/agent-inn/internal/module"
+	"github.com/jesse/agent-inn/internal/modulehook"
 	appruntime "github.com/jesse/agent-inn/internal/runtime"
 	"github.com/jesse/agent-inn/internal/upstream"
 )
 
 func TestWorkerManagementStatusRedactsSecretsAndIncludesGeneration(t *testing.T) {
-	w := New(Options{
+	w := mustNewWorker(t, Options{
 		Snapshot: RuntimeConfigSnapshot{
 			Generation: 7,
 			Upstream: upstream.RuntimeUpstream{
@@ -49,11 +50,13 @@ func TestWorkerManagementStatusRedactsSecretsAndIncludesGeneration(t *testing.T)
 }
 
 func TestWorkerManagementStatusIncludesConfigPatchState(t *testing.T) {
-	w := New(Options{
+	w := mustNewWorker(t, Options{
 		Snapshot: RuntimeConfigSnapshot{
-			Generation:       1,
-			Upstream:         upstream.RuntimeUpstream{Name: "openai", BaseURL: "https://api.openai.com/v1"},
-			ConfigPatchState: module.ConfigPatchActive,
+			Generation: 1,
+			Upstream:   upstream.RuntimeUpstream{Name: "openai", BaseURL: "https://api.openai.com/v1"},
+			HookStatuses: map[string]modulehook.Status{
+				"config_patch": {State: modulehook.ConfigPatchActive},
+			},
 		},
 	})
 
@@ -62,23 +65,30 @@ func TestWorkerManagementStatusIncludesConfigPatchState(t *testing.T) {
 	if res.Code != http.StatusOK {
 		t.Fatalf("unexpected status %d: %s", res.Code, res.Body.String())
 	}
-	if !strings.Contains(res.Body.String(), `"config_patch_state":"active"`) {
-		t.Fatalf("status missing config_patch_state: %s", res.Body.String())
+	if strings.Contains(res.Body.String(), "config_patch_state") {
+		t.Fatalf("status included old config_patch_state: %s", res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), `"hook_statuses":{"config_patch":{"state":"active"}}`) {
+		t.Fatalf("status missing hook_statuses config_patch state: %s", res.Body.String())
 	}
 }
 
 func TestWorkerManagementStatusIncludesConfigPatchRecoveryDetail(t *testing.T) {
-	w := New(Options{
+	w := mustNewWorker(t, Options{
 		Snapshot: RuntimeConfigSnapshot{
-			Generation:       2,
-			Upstream:         upstream.RuntimeUpstream{Name: "openai", BaseURL: "https://api.openai.com/v1"},
-			ConfigPatchState: module.ConfigPatchUnresolved,
-			ConfigPatchDetail: map[string]string{
-				"provider_name":  "test",
-				"field_name":     "base_url",
-				"previous_value": "https://example.com/v1",
-				"patched_value":  "http://127.0.0.1:6767",
-				"current_value":  "https://manual.example/v1",
+			Generation: 2,
+			Upstream:   upstream.RuntimeUpstream{Name: "openai", BaseURL: "https://api.openai.com/v1"},
+			HookStatuses: map[string]modulehook.Status{
+				"config_patch": {
+					State: modulehook.ConfigPatchUnresolved,
+					Detail: map[string]string{
+						"provider_name":  "test",
+						"field_name":     "base_url",
+						"previous_value": "https://example.com/v1",
+						"patched_value":  "http://127.0.0.1:6767",
+						"current_value":  "https://manual.example/v1",
+					},
+				},
 			},
 		},
 	})
@@ -89,8 +99,9 @@ func TestWorkerManagementStatusIncludesConfigPatchRecoveryDetail(t *testing.T) {
 		t.Fatalf("unexpected status %d: %s", res.Code, res.Body.String())
 	}
 	for _, want := range []string{
-		`"config_patch_state":"unresolved"`,
-		`"config_patch_detail"`,
+		`"hook_statuses"`,
+		`"config_patch":{"state":"unresolved"`,
+		`"detail"`,
 		`"current_value":"https://manual.example/v1"`,
 		`"patched_value":"http://127.0.0.1:6767"`,
 	} {
@@ -98,10 +109,13 @@ func TestWorkerManagementStatusIncludesConfigPatchRecoveryDetail(t *testing.T) {
 			t.Fatalf("status missing %s: %s", want, res.Body.String())
 		}
 	}
+	if strings.Contains(res.Body.String(), "config_patch_state") || strings.Contains(res.Body.String(), "config_patch_detail") {
+		t.Fatalf("status included old config_patch fields: %s", res.Body.String())
+	}
 }
 
 func TestWorkerManagementApplyRuntimeRebuildsAPITranslate(t *testing.T) {
-	w := New(Options{
+	w := mustNewWorker(t, Options{
 		Runtime: appruntime.WorkerRuntime{
 			ID:         "cli-openai",
 			Generation: 1,
@@ -133,11 +147,48 @@ func TestWorkerManagementApplyRuntimeRebuildsAPITranslate(t *testing.T) {
 	}
 }
 
+func TestWorkerManagementApplyRuntimeAcceptsExternalLifecycleHookBinding(t *testing.T) {
+	w := mustNewWorker(t, Options{
+		Runtime: appruntime.WorkerRuntime{
+			ID:         "cli-openai",
+			Generation: 1,
+			ListenPort: 11199,
+			Upstream: appruntime.UpstreamRuntime{
+				ID:      "openai",
+				BaseURL: "https://old.example/v1",
+			},
+		},
+	})
+
+	next := `{"id":"cli-openai","generation":2,"listen_port":11199,"upstream":{"id":"openai","base_url":"https://api.openai.com/v1"},"plugins":{"external_hook":{"kind":"lifecycle_hook","source":"external","command":"/bin/cat","protocol_version":"1"}},"hooks":{"external_hook":{"enabled":true}}}`
+	res := httptest.NewRecorder()
+	w.ServeHTTP(res, httptest.NewRequest(http.MethodPut, "http://proxy.local/_proxy/runtime", strings.NewReader(next)))
+	if res.Code != http.StatusOK {
+		t.Fatalf("apply runtime failed: %d %s", res.Code, res.Body.String())
+	}
+
+	status := httptest.NewRecorder()
+	w.ServeHTTP(status, httptest.NewRequest(http.MethodGet, "http://proxy.local/_proxy/status", nil))
+	if !strings.Contains(status.Body.String(), `"hooks":{"external_hook":{"enabled":true}}`) {
+		t.Fatalf("status did not expose external hook binding: %s", status.Body.String())
+	}
+}
+
 func TestWorkerManagementSwitchValidatesBeforeSwap(t *testing.T) {
-	w := New(Options{
+	w := mustNewWorker(t, Options{
 		Snapshot: RuntimeConfigSnapshot{
 			Generation: 1,
-			Upstream:   upstream.RuntimeUpstream{Name: "old", BaseURL: "https://old.example/v1"},
+			Upstream: upstream.RuntimeUpstream{
+				Name:      "old",
+				BaseURL:   "https://old.example/v1",
+				APIFormat: "responses",
+			},
+			RequestModuleConfigs: map[string]module.ModuleConfig{
+				"api_translate": {Enabled: true, Params: map[string]any{"api_format": "responses"}},
+			},
+			Modules: []module.Middleware{
+				module.NewAPITranslate(module.ModuleConfig{Enabled: true, Params: map[string]any{"api_format": "responses"}}),
+			},
 		},
 	})
 
@@ -164,10 +215,13 @@ func TestWorkerManagementSwitchValidatesBeforeSwap(t *testing.T) {
 	if !strings.Contains(status.Body.String(), `"snapshot_generation":2`) || strings.Contains(status.Body.String(), "sk-new") {
 		t.Fatalf("bad status after switch: %s", status.Body.String())
 	}
+	if !strings.Contains(status.Body.String(), `"api_format":"chat_completions"`) {
+		t.Fatalf("switch did not rebuild request middleware chain: %s", status.Body.String())
+	}
 }
 
 func TestWorkerManagementModuleToggle(t *testing.T) {
-	w := New(Options{
+	w := mustNewWorker(t, Options{
 		Snapshot: RuntimeConfigSnapshot{
 			Generation: 1,
 			Upstream:   upstream.RuntimeUpstream{Name: "openai", BaseURL: "https://api.openai.com/v1"},
@@ -189,7 +243,7 @@ func TestWorkerManagementModuleToggle(t *testing.T) {
 }
 
 func TestWorkerManagementModulePatch(t *testing.T) {
-	w := New(Options{
+	w := mustNewWorker(t, Options{
 		Snapshot: RuntimeConfigSnapshot{
 			Generation: 1,
 			Upstream:   upstream.RuntimeUpstream{Name: "openai", BaseURL: "https://api.openai.com/v1"},
@@ -208,4 +262,80 @@ func TestWorkerManagementModulePatch(t *testing.T) {
 	if !strings.Contains(status.Body.String(), `"enabled":true`) || !strings.Contains(status.Body.String(), "gpt-test") {
 		t.Fatalf("module was not patched: %s", status.Body.String())
 	}
+}
+
+func TestWorkerManagementExternalModulePatch(t *testing.T) {
+	w := mustNewWorker(t, Options{
+		Runtime: appruntime.WorkerRuntime{
+			ID:         "cli-openai",
+			Generation: 1,
+			ListenPort: 11199,
+			Upstream: appruntime.UpstreamRuntime{
+				ID:      "openai",
+				BaseURL: "https://api.openai.com/v1",
+			},
+			Plugins: map[string]appruntime.PluginRuntime{
+				"external_filter": {
+					Kind:            "request_middleware",
+					Source:          "external",
+					Command:         "/bin/cat",
+					ProtocolVersion: "1",
+				},
+			},
+			Modules: map[string]appruntime.ModuleConfig{
+				"external_filter": {Enabled: false},
+			},
+		},
+	})
+
+	res := httptest.NewRecorder()
+	w.ServeHTTP(res, httptest.NewRequest(http.MethodPatch, "http://proxy.local/_proxy/modules/external_filter", strings.NewReader(`{"enabled":true,"params":{"mode":"strict"}}`)))
+	if res.Code != http.StatusOK {
+		t.Fatalf("unexpected patch status %d: %s", res.Code, res.Body.String())
+	}
+
+	status := httptest.NewRecorder()
+	w.ServeHTTP(status, httptest.NewRequest(http.MethodGet, "http://proxy.local/_proxy/modules/external_filter", nil))
+	if !strings.Contains(status.Body.String(), `"enabled":true`) || !strings.Contains(status.Body.String(), "strict") {
+		t.Fatalf("external module was not patched: %s", status.Body.String())
+	}
+}
+
+func TestWorkerManagementModulePatchRebuildsAPITranslateDefaults(t *testing.T) {
+	w := mustNewWorker(t, Options{
+		Runtime: appruntime.WorkerRuntime{
+			ID:         "cli-openai",
+			Generation: 1,
+			ListenPort: 11199,
+			Upstream: appruntime.UpstreamRuntime{
+				ID:        "openai",
+				BaseURL:   "https://api.openai.com/v1",
+				APIFormat: "chat_completions",
+			},
+			Modules: map[string]appruntime.ModuleConfig{
+				"api_translate": {Enabled: false},
+			},
+		},
+	})
+
+	res := httptest.NewRecorder()
+	w.ServeHTTP(res, httptest.NewRequest(http.MethodPatch, "http://proxy.local/_proxy/modules/api_translate", strings.NewReader(`{"enabled":true}`)))
+	if res.Code != http.StatusOK {
+		t.Fatalf("unexpected patch status %d: %s", res.Code, res.Body.String())
+	}
+
+	status := httptest.NewRecorder()
+	w.ServeHTTP(status, httptest.NewRequest(http.MethodGet, "http://proxy.local/_proxy/modules/api_translate", nil))
+	if !strings.Contains(status.Body.String(), `"enabled":true`) || !strings.Contains(status.Body.String(), `"api_format":"chat_completions"`) {
+		t.Fatalf("api_translate was not rebuilt with upstream defaults: %s", status.Body.String())
+	}
+}
+
+func mustNewWorker(t *testing.T, opts Options) *Worker {
+	t.Helper()
+	w, err := New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return w
 }

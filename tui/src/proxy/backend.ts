@@ -1,4 +1,4 @@
-import type { Agent, Config, Model, Path, Project, Provider } from "@agent-inn/sdk/v2"
+import type { Agent, Model, Path, Project, Provider } from "@agent-inn/sdk/v2"
 import type { EventSource } from "../context/sdk"
 
 export type RedactedUpstream = {
@@ -22,6 +22,39 @@ export type ModuleConfig = {
   params?: Record<string, unknown>
 }
 
+export type HookStatus = {
+  state: string
+  detail?: Record<string, string>
+}
+
+export type PluginDefinition = {
+  kind: "request_middleware" | "lifecycle_hook"
+  source: "builtin" | "external"
+  path?: string
+}
+
+export type WorkerConfig = {
+  role?: string
+  port: number
+  upstream: string
+  log_level?: string
+  request_modules?: Record<string, ModuleConfig>
+  hooks?: Record<string, ModuleConfig>
+}
+
+export type UpstreamProfile = {
+  base_url: string
+  api_key?: string
+  api_format?: string
+}
+
+export type ProxyConfig = {
+  settings?: ProxySettings
+  plugins?: Record<string, PluginDefinition>
+  workers?: Record<string, WorkerConfig>
+  upstreams?: Record<string, UpstreamProfile>
+}
+
 export type WorkerSummary = {
   name: string
   port: number
@@ -31,12 +64,11 @@ export type WorkerSummary = {
   snapshot_generation: number
   log_level: string
   modules?: Record<string, ModuleConfig>
+  hooks?: Record<string, ModuleConfig>
+  hook_statuses?: Record<string, HookStatus>
 }
 
-export type WorkerDetail = WorkerSummary & {
-  config_patch_state?: string
-  config_patch_detail?: Record<string, string>
-}
+export type WorkerDetail = WorkerSummary
 
 export type ProxyConfigStatus = {
   generation: number
@@ -45,7 +77,7 @@ export type ProxyConfigStatus = {
 }
 
 export type ProxyConfigResponse = {
-  config: Config
+  config: ProxyConfig
   status: ProxyConfigStatus
 }
 

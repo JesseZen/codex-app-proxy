@@ -14,6 +14,7 @@ import (
 func TestWorkerStreamEndpointReplaysExistingLines(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
+			Plugins: testPluginDefinitions(),
 			Workers: map[string]config.WorkerConfig{
 				"app": {Port: 6767, Upstream: "openai", LogLevel: "detail"},
 			},
@@ -53,6 +54,7 @@ func TestWorkerStreamEndpointReplaysExistingLines(t *testing.T) {
 func TestWorkerStreamEndpointStreamsLiveSubscribedLines(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
+			Plugins: testPluginDefinitions(),
 			Workers: map[string]config.WorkerConfig{
 				"app": {Port: 6767, Upstream: "openai", LogLevel: "detail"},
 			},
@@ -91,6 +93,7 @@ func TestWorkerStreamEndpointStreamsLiveSubscribedLines(t *testing.T) {
 func TestWorkerStreamEndpointStopsWhenSinkCloses(t *testing.T) {
 	m := New(Config{
 		Config: config.Config{
+			Plugins: testPluginDefinitions(),
 			Workers: map[string]config.WorkerConfig{
 				"app": {Port: 6767, Upstream: "openai", LogLevel: "detail"},
 			},

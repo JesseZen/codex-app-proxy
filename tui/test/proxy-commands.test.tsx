@@ -130,6 +130,7 @@ test("proxy workers detail exposes worker status and scoped actions", async () =
     expect(app.frame()).toContain("upstream: openai")
     expect(app.frame()).toContain("log level: simple")
     expect(app.frame()).toContain("modules")
+    expect(app.frame()).toContain("config_patch: active")
     expect(app.frame()).toContain("Log Level")
     expect(app.frame()).toContain("Switch Upstream")
     expect(app.frame()).toContain("Manage Modules")
@@ -153,7 +154,7 @@ test("proxy workers module action patches module through module API", async () =
     await runCommand(app, "dialog.select.submit")
     await wait(async () => {
       await app.render()
-      return app.frame().includes("Modules: app")
+      return app.frame().includes("Modules & Hooks: app")
     })
 
     app.api.keymap.dispatchCommand("dialog.select.submit")
@@ -177,7 +178,7 @@ test("proxy workers module action patches module through module API", async () =
     ])
     expect(app.calls.patchWorker).toEqual([])
 
-    expect(app.frame()).not.toContain("Modules: app")
+    expect(app.frame()).not.toContain("Modules & Hooks: app")
 
     app.mockInput.pressEscape()
     await app.render()
@@ -187,33 +188,50 @@ test("proxy workers module action patches module through module API", async () =
   }
 })
 
-test("proxy workers detail opens logs and controls worker lifecycle", async () => {
+test("proxy workers module view shows lifecycle hooks separately", async () => {
   const app = await mountProxyApp()
 
   try {
     await openWorkerDetail(app)
+    expect(app.frame()).toContain("Manage Modules")
+
     await runCommand(app, "dialog.select.next")
     await runCommand(app, "dialog.select.next")
-    await runCommand(app, "dialog.select.next")
-    app.api.keymap.dispatchCommand("dialog.select.submit")
-    await wait(() => app.calls.getLogs > 0)
+    await runCommand(app, "dialog.select.submit")
     await wait(async () => {
       await app.render()
-      return app.frame().includes("Logs: app (:6767)") && app.frame().includes("booted")
+      return app.frame().includes("Modules & Hooks: app")
     })
-    expect(app.frame()).toContain("booted")
 
-    await openWorkerDetail(app)
-    await runCommand(app, "dialog.select.end")
-    await runCommand(app, "dialog.select.prev")
-    app.api.keymap.dispatchCommand("dialog.select.submit")
-    await wait(() => app.calls.restartWorker.length === 1)
-    expect(app.calls.restartWorker).toEqual([6767])
+    expect(app.frame()).toContain("Request Middleware")
+    expect(app.frame()).toContain("Lifecycle Hooks")
+    expect(app.frame()).toContain("request_log")
+    await runCommand(app, "dialog.select.next")
+    await runCommand(app, "dialog.select.next")
+    await runCommand(app, "dialog.select.next")
+    expect(app.frame()).toContain("config_patch")
+  } finally {
+    await app.cleanup()
+  }
+})
 
-    await openWorkerDetail(app)
-    await runCommand(app, "dialog.select.end")
-    app.api.keymap.dispatchCommand("dialog.select.submit")
-    await wait(() => app.calls.stopWorker.length === 1)
+test("proxy workers detail controls worker lifecycle", async () => {
+  const app = await mountProxyApp()
+
+	try {
+		await openWorkerDetail(app)
+		await runCommand(app, "dialog.select.end")
+		await runCommand(app, "dialog.select.prev")
+		await runCommand(app, "dialog.select.prev")
+		app.api.keymap.dispatchCommand("dialog.select.submit")
+		await wait(() => app.calls.restartWorker.length === 1)
+		expect(app.calls.restartWorker).toEqual([6767])
+
+		await openWorkerDetail(app)
+		await runCommand(app, "dialog.select.end")
+		await runCommand(app, "dialog.select.prev")
+		app.api.keymap.dispatchCommand("dialog.select.submit")
+		await wait(() => app.calls.stopWorker.length === 1)
     expect(app.calls.stopWorker).toEqual([6767])
   } finally {
     await app.cleanup()

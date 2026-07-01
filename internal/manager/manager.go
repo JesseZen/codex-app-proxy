@@ -16,6 +16,7 @@ import (
 	"github.com/jesse/agent-inn/internal/constants"
 	"github.com/jesse/agent-inn/internal/logging"
 	"github.com/jesse/agent-inn/internal/module"
+	"github.com/jesse/agent-inn/internal/modulehook"
 	appruntime "github.com/jesse/agent-inn/internal/runtime"
 	"github.com/jesse/agent-inn/internal/upstream"
 )
@@ -31,31 +32,30 @@ type Config struct {
 }
 
 type Manager struct {
-	mu                 sync.RWMutex
-	config             config.Config
-	configPath         string
-	configStatus       config.Status
-	executable         string
-	starter            Starter
-	healthChecker      HealthChecker
-	workerClient       WorkerClient
-	clock              func() time.Time
-	healthWait         time.Duration
-	healthPoll         time.Duration
-	store              *config.Store
-	stopConfigWriter   func()
-	events             *eventBus
-	portIndex          map[int]string
-	supervisors        map[string]*WorkerSupervisor
-	processes          map[string]ManagedProcess
-	statuses           map[string]WorkerState
-	retries            map[string]int
-	healthySince       map[string]time.Time
-	generations        map[string]int
-	logs               map[string]*logging.WorkerLogSink
-	configPatchStates  map[string]string
-	configPatchDetails map[string]map[string]string
-	hostedSessions     *HostedSessionRegistry
+	mu               sync.RWMutex
+	config           config.Config
+	configPath       string
+	configStatus     config.Status
+	executable       string
+	starter          Starter
+	healthChecker    HealthChecker
+	workerClient     WorkerClient
+	clock            func() time.Time
+	healthWait       time.Duration
+	healthPoll       time.Duration
+	store            *config.Store
+	stopConfigWriter func()
+	events           *eventBus
+	portIndex        map[int]string
+	supervisors      map[string]*WorkerSupervisor
+	processes        map[string]ManagedProcess
+	statuses         map[string]WorkerState
+	retries          map[string]int
+	healthySince     map[string]time.Time
+	generations      map[string]int
+	logs             map[string]*logging.WorkerLogSink
+	hookStatuses     map[string]map[string]modulehook.Status
+	hostedSessions   *HostedSessionRegistry
 }
 
 type WorkerSummary struct {
@@ -67,6 +67,7 @@ type WorkerSummary struct {
 	SnapshotGeneration int                            `json:"snapshot_generation"`
 	LogLevel           string                         `json:"log_level"`
 	Modules            map[string]config.ModuleConfig `json:"modules,omitempty"`
+	Hooks              map[string]config.ModuleConfig `json:"hooks,omitempty"`
 }
 
 type Starter interface {
@@ -102,8 +103,8 @@ type WorkerStatus struct {
 	SnapshotGeneration int                            `json:"snapshot_generation"`
 	Upstream           upstream.RedactedUpstream      `json:"upstream"`
 	Modules            map[string]config.ModuleConfig `json:"modules"`
-	ConfigPatchState   string                         `json:"config_patch_state,omitempty"`
-	ConfigPatchDetail  map[string]string              `json:"config_patch_detail,omitempty"`
+	Hooks              map[string]config.ModuleConfig `json:"hooks,omitempty"`
+	HookStatuses       map[string]modulehook.Status   `json:"hook_statuses,omitempty"`
 }
 
 type WorkerDetail struct {
@@ -114,49 +115,39 @@ type WorkerDetail struct {
 	Status             string                         `json:"status"`
 	SnapshotGeneration int                            `json:"snapshot_generation"`
 	LogLevel           string                         `json:"log_level"`
-	ConfigPatchState   string                         `json:"config_patch_state,omitempty"`
-	ConfigPatchDetail  map[string]string              `json:"config_patch_detail,omitempty"`
+	HookStatuses       map[string]modulehook.Status   `json:"hook_statuses,omitempty"`
 	Modules            map[string]config.ModuleConfig `json:"modules,omitempty"`
+	Hooks              map[string]config.ModuleConfig `json:"hooks,omitempty"`
 }
 
 const healthyRetryResetWindow = 60 * time.Second
-
-var builtInModuleNames = []string{
-	"image_filter",
-	"api_translate",
-	"model_override",
-	"config_patch",
-	"request_log",
-	"debug_sse",
-}
 
 func New(cfg Config) *Manager {
 	cfg.Config.ApplyDefaults()
 	store := config.NewStore(cfg.ConfigPath, cfg.Config)
 	m := &Manager{
-		config:             cfg.Config,
-		configPath:         cfg.ConfigPath,
-		configStatus:       cfg.ConfigStatus,
-		executable:         cfg.Executable,
-		starter:            cfg.Starter,
-		healthChecker:      cfg.HealthChecker,
-		workerClient:       cfg.WorkerClient,
-		clock:              time.Now,
-		healthWait:         10 * time.Second,
-		healthPoll:         100 * time.Millisecond,
-		store:              store,
-		events:             newEventBus(defaultEventBusCapacity),
-		portIndex:          map[int]string{},
-		supervisors:        map[string]*WorkerSupervisor{},
-		processes:          map[string]ManagedProcess{},
-		statuses:           map[string]WorkerState{},
-		retries:            map[string]int{},
-		healthySince:       map[string]time.Time{},
-		generations:        map[string]int{},
-		logs:               map[string]*logging.WorkerLogSink{},
-		configPatchStates:  map[string]string{},
-		configPatchDetails: map[string]map[string]string{},
-		hostedSessions:     NewHostedSessionRegistry(hostedSessionRegistryPath(cfg.Config.Settings.StateDir)),
+		config:         cfg.Config,
+		configPath:     cfg.ConfigPath,
+		configStatus:   cfg.ConfigStatus,
+		executable:     cfg.Executable,
+		starter:        cfg.Starter,
+		healthChecker:  cfg.HealthChecker,
+		workerClient:   cfg.WorkerClient,
+		clock:          time.Now,
+		healthWait:     10 * time.Second,
+		healthPoll:     100 * time.Millisecond,
+		store:          store,
+		events:         newEventBus(defaultEventBusCapacity),
+		portIndex:      map[int]string{},
+		supervisors:    map[string]*WorkerSupervisor{},
+		processes:      map[string]ManagedProcess{},
+		statuses:       map[string]WorkerState{},
+		retries:        map[string]int{},
+		healthySince:   map[string]time.Time{},
+		generations:    map[string]int{},
+		logs:           map[string]*logging.WorkerLogSink{},
+		hookStatuses:   map[string]map[string]modulehook.Status{},
+		hostedSessions: NewHostedSessionRegistry(hostedSessionRegistryPath(cfg.Config.Settings.StateDir)),
 	}
 	if cfg.ConfigPath != "" {
 		m.stopConfigWriter = store.StartAsyncWriter()
@@ -266,7 +257,8 @@ func (m *Manager) workerSummaries() []WorkerSummary {
 			Status:             seed.status,
 			SnapshotGeneration: seed.generation,
 			LogLevel:           workerLogLevel(seed.worker),
-			Modules:            workerModulesWithBuiltIns(seed.worker.Modules),
+			Modules:            cloneModules(seed.worker.RequestModules),
+			Hooks:              cloneModules(seed.worker.Hooks),
 		})
 	}
 	return out
@@ -286,9 +278,9 @@ func (m *Manager) workerDetail(name string, worker config.WorkerConfig) WorkerDe
 		Status:             string(m.workerStatus(name)),
 		SnapshotGeneration: m.workerGeneration(name),
 		LogLevel:           workerLogLevel(worker),
-		Modules:            workerModulesWithBuiltIns(worker.Modules),
-		ConfigPatchState:   m.configPatchState(name),
-		ConfigPatchDetail:  m.configPatchDetail(name),
+		Modules:            cloneModules(worker.RequestModules),
+		Hooks:              cloneModules(worker.Hooks),
+		HookStatuses:       m.hookStatusesForWorker(name),
 	}
 
 	if detail.Status != string(WorkerStateRunning) {
@@ -310,10 +302,14 @@ func (m *Manager) workerDetail(name string, worker config.WorkerConfig) WorkerDe
 		detail.Upstream = status.Upstream
 	}
 	if status.Modules != nil {
-		detail.Modules = workerModulesWithBuiltIns(status.Modules)
+		detail.Modules = cloneModules(status.Modules)
 	}
-	detail.ConfigPatchState = status.ConfigPatchState
-	detail.ConfigPatchDetail = status.ConfigPatchDetail
+	if status.Hooks != nil {
+		detail.Hooks = cloneModules(status.Hooks)
+	}
+	if status.HookStatuses != nil {
+		detail.HookStatuses = cloneHookStatuses(status.HookStatuses)
+	}
 	return detail
 }
 
@@ -340,6 +336,16 @@ func (m *Manager) runtimeForWorker(name string) (appruntime.WorkerRuntime, error
 	generation := appruntime.Generation(m.workerGenerationLocked(name))
 	m.mu.RUnlock()
 	return (RuntimeBuilder{}).Build(cfg, name, generation)
+}
+
+func (m *Manager) validateWorkerRuntime(name string, worker config.WorkerConfig) error {
+	m.mu.RLock()
+	cfg := cloneConfig(m.config)
+	generation := appruntime.Generation(m.workerGenerationLocked(name))
+	m.mu.RUnlock()
+	cfg.Workers[name] = cloneWorkerConfig(worker)
+	_, err := (RuntimeBuilder{}).Build(cfg, name, generation)
+	return err
 }
 
 func (m *Manager) workerByPort(port int) (string, config.WorkerConfig, bool) {
@@ -416,54 +422,79 @@ func (m *Manager) workerStatus(name string) WorkerState {
 }
 
 func (m *Manager) configPatchState(name string) string {
-	m.mu.RLock()
-	if supervisor := m.supervisors[name]; supervisor != nil && supervisor.ConfigPatchState() != "" {
-		state := supervisor.ConfigPatchState()
-		m.mu.RUnlock()
-		return state
-	}
-	defer m.mu.RUnlock()
-	return m.configPatchStates[name]
+	return m.hookStatus(name, modulehook.ConfigPatchName).State
 }
 
-func (m *Manager) configPatchDetail(name string) map[string]string {
+func (m *Manager) hookStatus(workerName string, hookName string) modulehook.Status {
 	m.mu.RLock()
-	if supervisor := m.supervisors[name]; supervisor != nil && len(supervisor.ConfigPatchDetail()) > 0 {
-		detail := supervisor.ConfigPatchDetail()
-		m.mu.RUnlock()
-		return detail
+	if supervisor := m.supervisors[workerName]; supervisor != nil {
+		statuses := supervisor.HookStatuses()
+		if status := statuses[hookName]; status.State != "" || len(status.Detail) > 0 {
+			m.mu.RUnlock()
+			return status
+		}
 	}
 	defer m.mu.RUnlock()
-	detail := m.configPatchDetails[name]
-	if len(detail) == 0 {
+	return cloneHookStatus(m.hookStatuses[workerName][hookName])
+}
+
+func (m *Manager) hookStatusesForWorker(workerName string) map[string]modulehook.Status {
+	m.mu.RLock()
+	statuses := cloneHookStatuses(m.hookStatuses[workerName])
+	if supervisor := m.supervisors[workerName]; supervisor != nil {
+		for name, status := range supervisor.HookStatuses() {
+			if statuses == nil {
+				statuses = map[string]modulehook.Status{}
+			}
+			statuses[name] = cloneHookStatus(status)
+		}
+	}
+	m.mu.RUnlock()
+	return statuses
+}
+
+func cloneHookStatuses(statuses map[string]modulehook.Status) map[string]modulehook.Status {
+	if len(statuses) == 0 {
 		return nil
 	}
-	out := make(map[string]string, len(detail))
-	for key, value := range detail {
-		out[key] = value
+	out := make(map[string]modulehook.Status, len(statuses))
+	for name, status := range statuses {
+		out[name] = cloneHookStatus(status)
 	}
 	return out
 }
 
-func (m *Manager) setConfigPatchStatus(name string, state module.ConfigPatchState, detail map[string]string) {
+func cloneHookStatus(status modulehook.Status) modulehook.Status {
+	next := modulehook.Status{State: status.State}
+	if len(status.Detail) > 0 {
+		next.Detail = make(map[string]string, len(status.Detail))
+		for key, value := range status.Detail {
+			next.Detail[key] = value
+		}
+	}
+	return next
+}
+
+func (m *Manager) configPatchDetail(name string) map[string]string {
+	return m.hookStatus(name, modulehook.ConfigPatchName).Detail
+}
+
+func (m *Manager) setConfigPatchStatus(name string, state modulehook.ConfigPatchState, detail map[string]string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.supervisorFor(name).setConfigPatchStatus(string(state), detail)
-	if state == "" || state == module.ConfigPatchClean || state == module.ConfigPatchRecovered || state == module.ConfigPatchActive {
-		delete(m.configPatchStates, name)
-		delete(m.configPatchDetails, name)
+	status := modulehook.Status{State: string(state), Detail: detail}
+	m.supervisorFor(name).setHookStatus(modulehook.ConfigPatchName, status)
+	if state == "" || state == modulehook.ConfigPatchClean || state == modulehook.ConfigPatchRecovered || state == modulehook.ConfigPatchActive {
+		delete(m.hookStatuses[name], modulehook.ConfigPatchName)
+		if len(m.hookStatuses[name]) == 0 {
+			delete(m.hookStatuses, name)
+		}
 		return
 	}
-	m.configPatchStates[name] = string(state)
-	if len(detail) == 0 {
-		delete(m.configPatchDetails, name)
-		return
+	if m.hookStatuses[name] == nil {
+		m.hookStatuses[name] = map[string]modulehook.Status{}
 	}
-	cloned := make(map[string]string, len(detail))
-	for key, value := range detail {
-		cloned[key] = value
-	}
-	m.configPatchDetails[name] = cloned
+	m.hookStatuses[name][modulehook.ConfigPatchName] = cloneHookStatus(status)
 }
 
 func (m *Manager) workerGeneration(name string) int {
@@ -718,7 +749,8 @@ func (m *Manager) publishWorkerUpdated(name string, worker config.WorkerConfig) 
 		"role":      worker.Role,
 		"upstream":  worker.Upstream,
 		"log_level": workerLogLevel(worker),
-		"modules":   cloneModules(worker.Modules),
+		"modules":   cloneModules(worker.RequestModules),
+		"hooks":     cloneModules(worker.Hooks),
 	})
 }
 
@@ -921,7 +953,7 @@ func (m *Manager) StartConfiguredWorkers() error {
 
 	var errs []error
 	for _, name := range names {
-		state, detail, err := recoverWorkerConfigPatch(workers[name], name)
+		state, detail, err := recoverConfigPatchBeforeWorkerStart(workers[name], name)
 		m.setConfigPatchStatus(name, state, detail)
 		if err != nil {
 			m.mu.Lock()
@@ -944,33 +976,23 @@ func (m *Manager) StartConfiguredWorkers() error {
 	return errors.Join(errs...)
 }
 
-func recoverWorkerConfigPatch(worker config.WorkerConfig, workerName string) (module.ConfigPatchState, map[string]string, error) {
-	moduleCfg, ok := worker.Modules["config_patch"]
+func recoverConfigPatchBeforeWorkerStart(worker config.WorkerConfig, workerName string) (modulehook.ConfigPatchState, map[string]string, error) {
+	moduleCfg, ok := worker.Hooks[modulehook.ConfigPatchName]
 	if !ok || !moduleCfg.Enabled {
-		return module.ConfigPatchClean, nil, nil
+		return modulehook.ConfigPatchClean, nil, nil
 	}
-	configPath, _ := moduleCfg.Params["config_path"].(string)
-	if configPath == "" {
-		configPath = "~/.codex/config.toml"
-	}
-	configPath = expandHomePath(configPath)
-	stateDir, _ := moduleCfg.Params["state_dir"].(string)
-	if stateDir == "" {
-		stateDir = "~/.ainn"
-	}
-	stateDir = expandHomePath(stateDir)
-	patch := module.NewConfigPatch(module.ConfigPatchOptions{
-		StateDir:    stateDir,
-		ConfigPath:  configPath,
-		WorkerID:    workerName,
-		WorkerPort:  worker.Port,
-		PatchedBase: fmt.Sprintf("http://%s:%d", constants.LocalhostAddr, worker.Port),
+	patch := modulehook.NewConfigPatch(module.ModuleConfig{
+		Enabled: moduleCfg.Enabled,
+		Params:  cloneAnyMap(moduleCfg.Params),
+	}, modulehook.BuildDependencies{
+		WorkerID:   workerName,
+		WorkerPort: worker.Port,
 	})
 	if err := patch.RecoverStaleJournal(); err != nil {
 		return patch.State(), patch.Detail(), err
 	}
 	switch patch.State() {
-	case module.ConfigPatchUnresolved, module.ConfigPatchFailed:
+	case modulehook.ConfigPatchUnresolved, modulehook.ConfigPatchFailed:
 		return patch.State(), patch.Detail(), fmt.Errorf("config_patch recovery state %s must be resolved before enabling", patch.State())
 	default:
 		return patch.State(), patch.Detail(), nil
@@ -1065,8 +1087,12 @@ func (m *Manager) liveWorkersUsingUpstream(upstreamName string) []liveWorkerTarg
 func cloneConfig(cfg config.Config) config.Config {
 	out := config.Config{
 		Settings:  cfg.Settings,
+		Plugins:   make(map[string]config.PluginDefinition, len(cfg.Plugins)),
 		Workers:   make(map[string]config.WorkerConfig, len(cfg.Workers)),
 		Upstreams: make(map[string]config.UpstreamProfile, len(cfg.Upstreams)),
+	}
+	for name, plugin := range cfg.Plugins {
+		out.Plugins[name] = plugin
 	}
 	for name, worker := range cfg.Workers {
 		out.Workers[name] = cloneWorkerConfig(worker)
@@ -1087,11 +1113,12 @@ func buildPortIndex(workers map[string]config.WorkerConfig) map[int]string {
 
 func cloneWorkerConfig(worker config.WorkerConfig) config.WorkerConfig {
 	return config.WorkerConfig{
-		Role:     worker.Role,
-		Port:     worker.Port,
-		Upstream: worker.Upstream,
-		LogLevel: workerLogLevel(worker),
-		Modules:  cloneModules(worker.Modules),
+		Role:           worker.Role,
+		Port:           worker.Port,
+		Upstream:       worker.Upstream,
+		LogLevel:       workerLogLevel(worker),
+		RequestModules: cloneModules(worker.RequestModules),
+		Hooks:          cloneModules(worker.Hooks),
 	}
 }
 
@@ -1103,12 +1130,13 @@ func cloneModules(modules map[string]config.ModuleConfig) map[string]config.Modu
 	return out
 }
 
-func workerModulesWithBuiltIns(modules map[string]config.ModuleConfig) map[string]config.ModuleConfig {
-	out := cloneModules(modules)
-	for _, name := range builtInModuleNames {
-		if _, ok := out[name]; !ok {
-			out[name] = config.ModuleConfig{Enabled: false, Params: map[string]any{}}
-		}
+func cloneAnyMap(values map[string]any) map[string]any {
+	if values == nil {
+		return nil
+	}
+	out := make(map[string]any, len(values))
+	for key, value := range values {
+		out[key] = value
 	}
 	return out
 }

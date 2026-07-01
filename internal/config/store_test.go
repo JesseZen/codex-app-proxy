@@ -23,11 +23,15 @@ settings:
     tmux:
       socket_name: ainn-test
       host_session: ainn-test-host
+plugins:
+  image_filter:
+    kind: request_middleware
+    source: builtin
 workers:
   codex-app:
     port: 6767
     upstream: openai
-    modules:
+    request_modules:
       image_filter:
         enabled: true
 upstreams:
@@ -59,7 +63,7 @@ upstreams:
 	if cfg.Upstreams["openai"].APIKey != "plain-key" {
 		t.Fatalf("expected plain api key to load, got %#v", cfg.Upstreams["openai"])
 	}
-	if !cfg.Workers["codex-app"].Modules["image_filter"].Enabled {
+	if !cfg.Workers["codex-app"].RequestModules["image_filter"].Enabled {
 		t.Fatal("expected module enabled")
 	}
 	if cfg.Workers["codex-app"].Role != "cli" {
@@ -89,7 +93,7 @@ upstreams:
 
 	want := Settings{
 		StateDir: "~/.ainn",
-		LogDir:  "~/.ainn/logs",
+		LogDir:   "~/.ainn/logs",
 		Launch: LaunchSettings{
 			DefaultMode: "hosted-terminal",
 		},
